@@ -3,30 +3,85 @@ package org.ajar.clique
 import android.os.Build
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
-import com.google.gson.Gson
+import android.util.Base64
 import org.ajar.clique.encryption.AsymmetricEncryptionDescription
+import org.ajar.clique.encryption.EncryptionDescription
 import java.lang.Exception
 import java.security.*
+import java.security.spec.PKCS8EncodedKeySpec
+import java.security.spec.X509EncodedKeySpec
+import javax.crypto.Cipher
 
 object CliqueConfig {
-    internal val targetCharset = Charsets.UTF_8
-    internal val gson = Gson()
     //TODO: Make configurable?
     internal var keyStoreType: String = "AndroidKeyStore"
     internal var dbName: String = "CliqueDatabase"
     internal var provider: Provider? = null
     private var keyStore: KeyStore? = null
 
+    private var createSpecBuilder: (String, Int) -> KeyGenParameterSpec.Builder = KeyGenParameterSpec::Builder
+    private var createKeyPairGenerator: (String, String?) -> KeyPairGenerator = KeyPairGenerator::getInstance
+
+    //TODO: More here later to allow people to select providers and choose algorithms.
+    fun listProviders(): List<Provider> {
+        return Security.getProviders().toList()
+    }
+
+    fun privateKeyFromBytes(algorithm: String, keyBytes: ByteArray): PrivateKey {
+        val factory = KeyFactory.getInstance(algorithm, provider)
+        return factory.generatePrivate(PKCS8EncodedKeySpec(keyBytes))
+    }
+
+    fun publicKeyFromBytes(algorithm: String, keyBytes: ByteArray): PublicKey {
+        val factory = KeyFactory.getInstance(algorithm, provider)
+        return factory.generatePublic(X509EncodedKeySpec(keyBytes))
+    }
+
+    fun initCipher(desc: EncryptionDescription, mode: Int, key: Key): Cipher {
+        val cipher  = Cipher.getInstance(desc.cipher, provider)
+        cipher.init(mode, key)
+        return cipher
+    }
+
+    fun transcodeString(string: String, readCipher: Cipher, writeCipher: Cipher): String {
+        return stringToEncodedString(stringToEncodedString(string, readCipher), writeCipher)
+    }
+
+    fun byteArrayToEncodedString(byteArray: ByteArray, cipher: Cipher): String =
+            Base64.encodeToString(cipher.doFinal(byteArray), Base64.NO_WRAP)
+
+    fun encodedStringToByteArray(encodedString: String, cipher: Cipher): ByteArray =
+            cipher.doFinal(Base64.decode(encodedString, Base64.NO_WRAP))
+
+    fun stringToEncodedString(string: String, cipher: Cipher): String =
+            byteArrayToEncodedString(string.toByteArray(Charsets.UTF_8), cipher)
+
+    fun encodedStringToString(encodedString: String, cipher: Cipher): String =
+            String(encodedStringToByteArray(encodedString, cipher), Charsets.UTF_8)
+
     internal var assymetricEncryption = AsymmetricEncryptionDescription.default
 
     internal fun loadKeyStore(loadParams: KeyStore.LoadStoreParameter? = null) {
-        keyStore = KeyStore.getInstance(keyStoreType, provider)
+       val keyStore = KeyStore.getInstance(keyStoreType, provider)
 
         keyStore!!.load(loadParams)
+        this.keyStore = keyStore
     }
 
     internal fun saveKeyStore(saveParams: KeyStore.LoadStoreParameter? = null) {
         keyStore?.store(saveParams)
+    }
+
+    internal fun setKeyStore(keyStore: KeyStore) {
+        this.keyStore = keyStore
+    }
+
+    internal fun setKeySpecBuilder(specBuilder: (String, Int) -> KeyGenParameterSpec.Builder) {
+        this.createSpecBuilder = specBuilder
+    }
+
+    internal fun setKeyPairGeneratorCreator(keyPairGenerator: (String, String?) -> KeyPairGenerator) {
+        this.createKeyPairGenerator = keyPairGenerator
     }
 
     //TODO: Default values are probably not a good idea.
@@ -50,7 +105,7 @@ object CliqueConfig {
             padding: String,
             requireRandom: Boolean
     ): KeyGenParameterSpec.Builder {
-            return KeyGenParameterSpec.Builder(name, KeyProperties.PURPOSE_DECRYPT or KeyProperties.PURPOSE_ENCRYPT)
+            return createSpecBuilder.invoke(name, KeyProperties.PURPOSE_DECRYPT or KeyProperties.PURPOSE_ENCRYPT)
                     .setBlockModes(blockModes)
                     .setEncryptionPaddings(padding)
                     .setRandomizedEncryptionRequired(requireRandom)
@@ -76,7 +131,7 @@ object CliqueConfig {
     }
 
     private fun generateKeyPair(algorithm: String, keySpec: KeyGenParameterSpec, keyStore: String?) : KeyPair {
-        val keyPairGenerator = KeyPairGenerator.getInstance(algorithm, keyStore)
+        val keyPairGenerator = createKeyPairGenerator.invoke(algorithm, keyStore)
 
         keyPairGenerator.initialize(keySpec)
 
@@ -86,7 +141,7 @@ object CliqueConfig {
     internal fun getPrivateKeyFromKeyStore(name: String): Key? {
         return try {
             keyStore?.getKey(name, null)
-        } catch (_: Exception) {
+        } catch (e: Exception) {
             null
         }
     }

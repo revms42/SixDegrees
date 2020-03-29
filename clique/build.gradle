@@ -23,6 +23,10 @@ android {
         }
     }
 
+    testOptions {
+        unitTests.returnDefaultValues = true
+    }
+
 }
 
 dependencies {
@@ -44,6 +48,9 @@ dependencies {
     implementation "androidx.room:room-runtime:$room_version"
     kapt "androidx.room:room-compiler:$room_version"
     testImplementation "androidx.room:room-testing:$room_version"
+
+    // Mockito
+    testImplementation "org.mockito:mockito-core:2.28.2"
 }
 repositories {
     mavenCentral()

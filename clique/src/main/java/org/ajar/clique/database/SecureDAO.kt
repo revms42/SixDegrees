@@ -32,6 +32,12 @@ interface CliqueAccountDAO {
     @Query("SELECT ${CliqueAccount.COLUMN_DISPLAY_NAME}, ${CliqueAccount.COLUMN_URL}, ${CliqueAccount.COLUMN_PUBLIC_1} FROM ${CliqueAccount.TABLE_NAME} WHERE ${CliqueAccount.COLUMN_USER} = :user LIMIT 1")
     fun findFriendRequestInfo(user: String): CliqueSubscription
 
+    @Query("SELECT ${CliqueAccount.COLUMN_URL} FROM ${CliqueAccount.TABLE_NAME} WHERE ${CliqueAccount.COLUMN_USER} = :user LIMIT 1")
+    fun findPublishUrlForUser(user: String): String
+
+    @Query("SELECT ${CliqueAccount.COLUMN_FILTER} FROM ${CliqueAccount.TABLE_NAME} WHERE ${CliqueAccount.COLUMN_USER} = :user LIMIT 1")
+    fun findFilterForUser(user: String): String
+
     @Query("SELECT ${CliqueAccount.COLUMN_DISPLAY_NAME}, ${CliqueAccount.COLUMN_URL}, ${CliqueAccount.COLUMN_PUBLIC_1} FROM ${CliqueAccount.TABLE_NAME} WHERE ${CliqueAccount.COLUMN_FILTER} = :filter")
     fun findSubscriptionKeys(filter: String): LiveData<List<CliqueSubscription>>
 
