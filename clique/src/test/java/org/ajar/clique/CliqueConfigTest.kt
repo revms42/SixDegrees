@@ -1,13 +1,16 @@
 package org.ajar.clique
 
 import android.security.keystore.KeyGenParameterSpec
+import android.util.Log
 import org.ajar.clique.encryption.AsymmetricEncryptionDescription
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Test
 import org.mockito.Mockito
 import java.security.*
 import java.security.cert.Certificate
+import java.util.*
 import javax.crypto.Cipher
 
 class CliqueConfigTest {
@@ -29,10 +32,21 @@ class CliqueConfigTest {
         keyStore = MockKeyStore(keyStoreSpi, provider)
         keyStore.load(null)
 
+        Mockito.verify(keyStoreSpi).engineLoad(null)
+
         privateKey = Mockito.mock(PrivateKey::class.java)
         publicKey = Mockito.mock(PublicKey::class.java)
 
         CliqueConfig.setKeyStore(keyStore)
+    }
+
+    fun switchCliqueConfigForJDK() {
+        CliqueConfig.setStringEncoder { array:ByteArray, _:Int  ->
+            Base64.getEncoder().encodeToString(array)
+        }
+        CliqueConfig.setByteArrayDecoder { string, _ ->
+            Base64.getDecoder().decode(string)
+        }
     }
 
     @Test
@@ -56,44 +70,15 @@ class CliqueConfigTest {
 
     @Test
     fun testCreateKeyPair() {
+        val encryptionDescription = AsymmetricEncryptionDescription(ENCRYPTION_BACKWARDS, BLOCKMODE_NONE, PADDING_NONE, false)
         val keySpec = Mockito.mock(KeyGenParameterSpec::class.java)
         val mockPair = KeyPair(publicKey, privateKey)
-
-        val keyName = ASYM_KEY_PAIR
-        val selectedModes = Cipher.DECRYPT_MODE or Cipher.ENCRYPT_MODE
-
-        val createBuilderSpec = fun(name: String, modes: Int): KeyGenParameterSpec.Builder {
-            assertEquals("Bad key name: $name != $keyName", keyName, name)
-            assertEquals("Bad modes: $modes != $selectedModes", selectedModes, modes)
-
-            val mockBuilder = Mockito.mock(KeyGenParameterSpec.Builder::class.java)
-
-            Mockito.`when`(mockBuilder.setBlockModes(BLOCKMODE_NONE)).thenReturn(mockBuilder)
-            Mockito.`when`(mockBuilder.setEncryptionPaddings(PADDING_NONE)).thenReturn(mockBuilder)
-            Mockito.`when`(mockBuilder.setRandomizedEncryptionRequired(REQUIRE_RANDOM)).thenReturn(mockBuilder)
-            Mockito.`when`(mockBuilder.build()).thenReturn(keySpec)
-
-            return mockBuilder
-        }
-        CliqueConfig.setKeySpecBuilder(createBuilderSpec)
-
-        val keyPairGenerator = Mockito.mock(KeyPairGenerator::class.java)
-
-        val createKeyPairGenerator = fun(algo: String, keyStore: String?): KeyPairGenerator {
-            assertEquals("Bad algo: $algo != $ENCRYPTION_BACKWARDS", ENCRYPTION_BACKWARDS, algo)
-            assertEquals("Bad keystore: $keyStore != 'null'", null, keyStore)
-
-            Mockito.`when`(keyPairGenerator.genKeyPair()).thenReturn(mockPair)
-
-            return keyPairGenerator
-        }
-        CliqueConfig.setKeyPairGeneratorCreator(createKeyPairGenerator)
-
-        val encryptionDescription = AsymmetricEncryptionDescription(ENCRYPTION_BACKWARDS, BLOCKMODE_NONE, PADDING_NONE, false)
+        val keyPairGenerator = CliqueConfigTestHelper.createKeyPairSetup(ASYM_KEY_PAIR, ENCRYPTION_BACKWARDS, encryptionDescription, keySpec, mockPair)
 
         val keyPair = CliqueConfig.createKeyPair(ASYM_KEY_PAIR, encryptionDescription)
 
         Mockito.verify(keyPairGenerator).initialize(keySpec)
+        Mockito.verifyNoMoreInteractions(keyStoreSpi)
 
         assertEquals("KeyPairs do not match: $mockPair != $keyPair", keyPair, mockPair)
         assertEquals("Private key does not match: ${mockPair.private} != ${keyPair.private}", keyPair.private, mockPair.private)
@@ -114,12 +99,44 @@ class CliqueConfigTest {
         assertEquals("Public Keys do not match: $testKey != $publicKey", publicKey, testKey)
     }
 
+    @Test
+    fun testRoundTripEncodedStringToByteArray() {
+        switchCliqueConfigForJDK()
+
+        val mockKey = Mockito.mock(Key::class.java)
+        val cipherMock = Cipher.getInstance(ENCRYPTION_BACKWARDS, TestCipherProviderSpi.provider)
+        cipherMock.init(Cipher.ENCRYPT_MODE, mockKey)
+
+        val byteArray = "The String to be encoded".toByteArray(Charsets.UTF_8)
+
+        val reversed = CliqueConfig.byteArrayToEncodedString(byteArray, cipherMock)
+        val restored = CliqueConfig.encodedStringToByteArray(reversed, cipherMock)
+
+        assertArrayEquals("Input array does not equal output array!", byteArray, restored)
+    }
+
+    @Test
+    fun testRoundTripStringToEncodedString() {
+        switchCliqueConfigForJDK()
+
+        val mockKey = Mockito.mock(Key::class.java)
+        val cipherMock = Cipher.getInstance(ENCRYPTION_BACKWARDS, TestCipherProviderSpi.provider)
+        cipherMock.init(Cipher.ENCRYPT_MODE, mockKey)
+
+        val targetString = "The String to be encoded"
+
+        val reversed = CliqueConfig.stringToEncodedString(targetString, cipherMock)
+        val restored = CliqueConfig.encodedStringToString(reversed, cipherMock)
+
+        assertEquals("Input string does not equal output string!", targetString, restored)
+    }
+
     companion object {
         const val KEYSTORE_NAME = "MockKeyStore"
 
         const val ASYM_KEY_PAIR = "dummyAsym"
-
         const val ENCRYPTION_BACKWARDS = "backwards"
+
         const val BLOCKMODE_NONE = "none"
         const val PADDING_NONE = "none"
         const val REQUIRE_RANDOM = false

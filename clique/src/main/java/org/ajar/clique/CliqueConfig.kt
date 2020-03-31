@@ -22,6 +22,9 @@ object CliqueConfig {
     private var createSpecBuilder: (String, Int) -> KeyGenParameterSpec.Builder = KeyGenParameterSpec::Builder
     private var createKeyPairGenerator: (String, String?) -> KeyPairGenerator = KeyPairGenerator::getInstance
 
+    private var encodeToString: (ByteArray, Int) -> String = Base64::encodeToString
+    private var decodeToByteArray: (String, Int) -> ByteArray = Base64::decode
+
     //TODO: More here later to allow people to select providers and choose algorithms.
     fun listProviders(): List<Provider> {
         return Security.getProviders().toList()
@@ -48,10 +51,11 @@ object CliqueConfig {
     }
 
     fun byteArrayToEncodedString(byteArray: ByteArray, cipher: Cipher): String =
-            Base64.encodeToString(cipher.doFinal(byteArray), Base64.NO_WRAP)
+            encodeToString(cipher.doFinal(byteArray), Base64.NO_WRAP)
+
 
     fun encodedStringToByteArray(encodedString: String, cipher: Cipher): ByteArray =
-            cipher.doFinal(Base64.decode(encodedString, Base64.NO_WRAP))
+            cipher.doFinal(decodeToByteArray(encodedString, Base64.NO_WRAP))
 
     fun stringToEncodedString(string: String, cipher: Cipher): String =
             byteArrayToEncodedString(string.toByteArray(Charsets.UTF_8), cipher)
@@ -82,6 +86,14 @@ object CliqueConfig {
 
     internal fun setKeyPairGeneratorCreator(keyPairGenerator: (String, String?) -> KeyPairGenerator) {
         this.createKeyPairGenerator = keyPairGenerator
+    }
+
+    internal fun setStringEncoder(stringEncoder: (ByteArray, Int) -> String) {
+        this.encodeToString = stringEncoder
+    }
+
+    internal fun setByteArrayDecoder(byteArrayDecoder: (String, Int) -> ByteArray) {
+        this.decodeToByteArray = byteArrayDecoder
     }
 
     //TODO: Default values are probably not a good idea.
