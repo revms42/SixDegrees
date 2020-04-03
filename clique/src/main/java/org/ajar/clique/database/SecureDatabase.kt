@@ -15,11 +15,14 @@ abstract class SecureDatabase : RoomDatabase() {
         val instance: SecureDatabase?
             get() = database
 
+        internal fun setDatabaseForTesting(database: SecureDatabase) {
+            SecureDatabase.database = database
+        }
+
         fun init(context: Context, name: String): Boolean {
             if(database == null) {
                 //TODO: This should take considerably more thought as this builder has a lot of options.
-                database = Room.databaseBuilder(context, SecureDatabase::class.java, name
-                ).allowMainThreadQueries().build()
+                database = Room.databaseBuilder(context, SecureDatabase::class.java, name).enableMultiInstanceInvalidation().build()
             }
             return database != null
         }

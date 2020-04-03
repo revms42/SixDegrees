@@ -47,7 +47,7 @@ object CliqueConfig {
     }
 
     fun transcodeString(string: String, readCipher: Cipher, writeCipher: Cipher): String {
-        return stringToEncodedString(stringToEncodedString(string, readCipher), writeCipher)
+        return stringToEncodedString(encodedStringToString(string, readCipher), writeCipher)
     }
 
     fun byteArrayToEncodedString(byteArray: ByteArray, cipher: Cipher): String =

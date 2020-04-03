@@ -1,8 +1,7 @@
 package org.ajar.clique
 
 import android.security.keystore.KeyGenParameterSpec
-import android.util.Log
-import org.ajar.clique.encryption.AsymmetricEncryptionDescription
+import org.ajar.clique.CliqueConfigTestHelper.createAsymmetricEncryptionDescription
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Before
@@ -70,10 +69,10 @@ class CliqueConfigTest {
 
     @Test
     fun testCreateKeyPair() {
-        val encryptionDescription = AsymmetricEncryptionDescription(ENCRYPTION_BACKWARDS, BLOCKMODE_NONE, PADDING_NONE, false)
+        val encryptionDescription = createAsymmetricEncryptionDescription(ENCRYPTION_BACKWARDS)
         val keySpec = Mockito.mock(KeyGenParameterSpec::class.java)
         val mockPair = KeyPair(publicKey, privateKey)
-        val keyPairGenerator = CliqueConfigTestHelper.createKeyPairSetup(ASYM_KEY_PAIR, ENCRYPTION_BACKWARDS, encryptionDescription, keySpec, mockPair)
+        val keyPairGenerator = CliqueConfigTestHelper.createKeyPairSetup(ASYM_KEY_PAIR, ENCRYPTION_BACKWARDS, keySpec, mockPair)
 
         val keyPair = CliqueConfig.createKeyPair(ASYM_KEY_PAIR, encryptionDescription)
 
@@ -131,14 +130,38 @@ class CliqueConfigTest {
         assertEquals("Input string does not equal output string!", targetString, restored)
     }
 
+    @Test
+    fun testTranscodeString() {
+        switchCliqueConfigForJDK()
+
+        val mockKey = Mockito.mock(Key::class.java)
+        var backwardsMock = Cipher.getInstance(ENCRYPTION_BACKWARDS, TestCipherProviderSpi.provider)
+        backwardsMock.init(Cipher.ENCRYPT_MODE, mockKey)
+
+        var targetString = "The String to be encoded"
+
+        val reversed = CliqueConfig.stringToEncodedString(targetString, backwardsMock)
+
+        backwardsMock = Cipher.getInstance(ENCRYPTION_BACKWARDS, TestCipherProviderSpi.provider)
+        backwardsMock.init(Cipher.DECRYPT_MODE, mockKey)
+
+        val capitalizeMock = Cipher.getInstance(ENCRYPTION_CAPITAL, TestCipherProviderSpi.provider)
+        capitalizeMock.init(Cipher.ENCRYPT_MODE, mockKey)
+
+        val transcoded = CliqueConfig.transcodeString(reversed, backwardsMock, capitalizeMock)
+
+        val deTransCoded = String(Base64.getDecoder().decode(transcoded), Charsets.UTF_8)
+
+        targetString = targetString.toUpperCase()
+
+        assertEquals("Input string does not equal anticipated string: $deTransCoded != $targetString", targetString, deTransCoded)
+    }
+
     companion object {
-        const val KEYSTORE_NAME = "MockKeyStore"
+        const val KEYSTORE_NAME = CliqueConfigTestHelper.KEYSTORE_NAME
 
-        const val ASYM_KEY_PAIR = "dummyAsym"
-        const val ENCRYPTION_BACKWARDS = "backwards"
-
-        const val BLOCKMODE_NONE = "none"
-        const val PADDING_NONE = "none"
-        const val REQUIRE_RANDOM = false
+        const val ASYM_KEY_PAIR = CliqueConfigTestHelper.ASYM_KEY_PAIR
+        const val ENCRYPTION_BACKWARDS = CliqueConfigTestHelper.ENCRYPTION_BACKWARDS
+        const val ENCRYPTION_CAPITAL = CliqueConfigTestHelper.ENCRYPTION_CAPITAL
     }
 }

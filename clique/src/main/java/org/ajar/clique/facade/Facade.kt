@@ -100,8 +100,8 @@ class RotationMessage private constructor(val algo: String, val url: String, val
 class User private constructor(
         val name: String,
         val url: String,
-        val friends: LiveData<List<Friend>>,
-        val rotation: LiveData<List<Rotation>>,
+        val friends: LiveData<List<Friend>?>,
+        val rotation: LiveData<List<Rotation>?>,
         private val subscribe: () -> Invitation?,
         private val feed: (value: String) -> String?
 ){
@@ -128,14 +128,14 @@ class User private constructor(
 
                     /** Note: Big assumption here - we're assuming that the dao will always return a non-null list.**/
                     val friends = Transformations.map(SecureDatabase.instance?.accountDao()?.findSubscriptionKeys(filter!!)!!) { subscriptionList ->
-                        subscriptionList.map { subscription ->
+                        subscriptionList?.map { subscription ->
                             Friend.fromSubscription(subscription, fun(): Cipher? { return symCipher(Cipher.DECRYPT_MODE) } )
                         }
                     }
 
                     val encryptedPublishUrl = SecureDatabase.instance?.accountDao()?.findPublishUrlForUser(encodedName)
                     val rotation = Transformations.map(SecureDatabase.instance?.accountDao()?.findRotationKeys(filter!!)!!) { rotationList ->
-                        rotationList.map { rotation ->
+                        rotationList?.map { rotation ->
                             Rotation.fromRotationDescription(rotation, encryptedPublishUrl!!, symCipher)
                         }
                     }
@@ -152,7 +152,14 @@ class User private constructor(
             }
         }
 
-        fun createUser(user: String, displayName: String, symmetricDescription: SymmetricEncryptionDescription, encryption: AsymmetricEncryptionDescription, url: String, context: Context) {
+        fun createUser(
+                context: Context,
+                user: String,
+                displayName: String,
+                url: String,
+                symmetricDescription: SymmetricEncryptionDescription = SymmetricEncryptionDescription.default,
+                encryption: AsymmetricEncryptionDescription = AsymmetricEncryptionDescription.default
+        ) {
             CliqueConfig.createSecuredKeyInKeyStore(user).private.also { userKey ->
                 val encryptUserKey = fun (): Cipher { return CliqueConfig.initCipher(CliqueConfig.assymetricEncryption, Cipher.ENCRYPT_MODE, userKey) }
 
