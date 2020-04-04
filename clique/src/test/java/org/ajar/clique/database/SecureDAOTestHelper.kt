@@ -1,10 +1,12 @@
 package org.ajar.clique.database
 
 import androidx.lifecycle.LiveData
+import androidx.lifecycle.MutableLiveData
 import androidx.room.DatabaseConfiguration
 import androidx.room.InvalidationTracker
 import androidx.sqlite.db.SupportSQLiteOpenHelper
 import com.google.gson.Gson
+import org.mockito.Mockito
 
 open class SecureDaoTestMock {
     private val dataMap = HashMap<String, String>()
@@ -19,6 +21,10 @@ open class SecureDaoTestMock {
 
     protected fun removeObject(key: String) {
         dataMap.remove(key)
+    }
+
+    protected fun <A> values(type: Class<A>) : List<A>? {
+        return dataMap.values.map { gson.fromJson(it, type) }.toList()
     }
 
     companion object {
@@ -69,12 +75,20 @@ class CliqueAccountDAOMock : SecureDaoTestMock(), CliqueAccountDAO {
         return findAccount(user)?.filter
     }
 
+    private fun filterAccounts(filter: String): List<CliqueAccount>? {
+        return values(CliqueAccount::class.java)?.filter { account -> account.filter == filter }
+    }
+
     override fun findSubscriptionKeys(filter: String): LiveData<List<CliqueSubscription>?> {
-        TODO("This will require not only mocking the livedata, but the behavior behind it")
+        return MutableLiveData<List<CliqueSubscription>?>().also {
+            it.postValue(filterAccounts(filter)?.map {account -> CliqueSubscription(account.displayName, account.url, account.publicOne) }?.toList())
+        }
     }
 
     override fun findRotationKeys(filter: String): LiveData<List<CliqueRotateDescription>?> {
-        TODO("This will require not only mocking the livedata, but the behavior behind it")
+        return MutableLiveData<List<CliqueRotateDescription>?>().also {
+            it.postValue(filterAccounts(filter)?.map { account -> CliqueRotateDescription(account.displayName, account.privateOne) }?.toList())
+        }
     }
 
     override fun addAccount(account: CliqueAccount) {
@@ -98,7 +112,9 @@ object SecureDAOTestHelper {
     fun setupMockDatabase() {
         val mockDB = object : SecureDatabase() {
             override fun createOpenHelper(config: DatabaseConfiguration?): SupportSQLiteOpenHelper { TODO("not implemented") }
-            override fun createInvalidationTracker(): InvalidationTracker { TODO("not implemented") }
+            override fun createInvalidationTracker(): InvalidationTracker {
+                return Mockito.mock(InvalidationTracker::class.java)
+            }
             override fun clearAllTables() { TODO("not implemented") }
 
             override fun accountDao(): CliqueAccountDAO { return accountMock }

@@ -6,11 +6,15 @@ import android.security.keystore.KeyProperties
 import android.util.Base64
 import org.ajar.clique.encryption.AsymmetricEncryptionDescription
 import org.ajar.clique.encryption.EncryptionDescription
+import org.ajar.clique.encryption.SymmetricEncryptionDescription
 import java.lang.Exception
 import java.security.*
 import java.security.spec.PKCS8EncodedKeySpec
 import java.security.spec.X509EncodedKeySpec
 import javax.crypto.Cipher
+import javax.crypto.KeyGenerator
+import javax.crypto.SecretKey
+import javax.crypto.SecretKeyFactory
 
 object CliqueConfig {
     //TODO: Make configurable?
@@ -24,6 +28,9 @@ object CliqueConfig {
 
     private var encodeToString: (ByteArray, Int) -> String = Base64::encodeToString
     private var decodeToByteArray: (String, Int) -> ByteArray = Base64::decode
+    private var createSecureRandom: () -> SecureRandom = ::SecureRandom
+
+    internal var assymetricEncryption = AsymmetricEncryptionDescription.default
 
     //TODO: More here later to allow people to select providers and choose algorithms.
     fun listProviders(): List<Provider> {
@@ -63,8 +70,6 @@ object CliqueConfig {
     fun encodedStringToString(encodedString: String, cipher: Cipher): String =
             String(encodedStringToByteArray(encodedString, cipher), Charsets.UTF_8)
 
-    internal var assymetricEncryption = AsymmetricEncryptionDescription.default
-
     internal fun loadKeyStore(loadParams: KeyStore.LoadStoreParameter? = null) {
        val keyStore = KeyStore.getInstance(keyStoreType, provider)
 
@@ -88,6 +93,10 @@ object CliqueConfig {
         this.createKeyPairGenerator = keyPairGenerator
     }
 
+    internal fun setSecureRandomeCreator(secureRandomCreator: () -> SecureRandom) {
+        this.createSecureRandom = secureRandomCreator
+    }
+
     internal fun setStringEncoder(stringEncoder: (ByteArray, Int) -> String) {
         this.encodeToString = stringEncoder
     }
@@ -109,6 +118,15 @@ object CliqueConfig {
             description: AsymmetricEncryptionDescription = assymetricEncryption
     ): KeyPair {
         return generateKeyPair(description.algorithm, createProtectedKeyBuilder(name, description.blockMode, description.padding, description.requireRandom).build(), keyStoreType)
+    }
+
+    internal fun createSecretKey(symKeyDescription: SymmetricEncryptionDescription = SymmetricEncryptionDescription.default, provider: Provider? = this.provider) : SecretKey {
+        val generator = KeyGenerator.getInstance(symKeyDescription.algorithm, provider)
+
+        val secureRandom = createSecureRandom.invoke()
+        generator.init(symKeyDescription.keySize, secureRandom)
+
+        return generator.generateKey()
     }
 
     private fun createKeyBuilder(

@@ -7,8 +7,9 @@ import org.junit.Assert
 import org.mockito.Mockito
 import java.security.*
 import java.security.spec.AlgorithmParameterSpec
-import javax.crypto.Cipher
-import javax.crypto.CipherSpi
+import java.security.spec.KeySpec
+import java.util.*
+import javax.crypto.*
 
 object CliqueConfigTestHelper {
     const val KEYSTORE_NAME = "MockKeyStore"
@@ -28,11 +29,8 @@ object CliqueConfigTestHelper {
         return SymmetricEncryptionDescription(encryption, BLOCKMODE_NONE, PADDING_NONE, 0)
     }
 
-    fun createSpecBuilder(keyName: String, selectedModes: Int, keySpec: KeyGenParameterSpec) : (String, Int) -> KeyGenParameterSpec.Builder =
-        fun(name: String, modes: Int): KeyGenParameterSpec.Builder {
-            Assert.assertEquals("Bad key name: $name != $keyName", keyName, name)
-            Assert.assertEquals("Bad modes: $modes != $selectedModes", selectedModes, modes)
-
+    fun createSpecBuilder(keySpec: KeyGenParameterSpec) : (String, Int) -> KeyGenParameterSpec.Builder =
+        fun(_: String, _: Int): KeyGenParameterSpec.Builder {
             var mockBuilder: KeyGenParameterSpec.Builder? = null
             mockBuilder = Mockito.mock(KeyGenParameterSpec.Builder::class.java) {
                 if(it.method.name == "build") {
@@ -45,26 +43,30 @@ object CliqueConfigTestHelper {
             return mockBuilder
         }
 
-    fun createKeyPairGenerator(mockPair: KeyPair, keyPairGenerator: KeyPairGenerator, algorithm: String, selectedKeyStore: String?) : (String, String?) -> KeyPairGenerator =
-            fun(algo: String, keyStore: String?): KeyPairGenerator {
-                Assert.assertEquals("Bad algo: $algo != $algorithm", algorithm, algo)
-                Assert.assertEquals("Bad keystore: $keyStore != $selectedKeyStore", selectedKeyStore, keyStore)
-
+    fun createKeyPairGenerator(mockPair: KeyPair, keyPairGenerator: KeyPairGenerator) : (String, String?) -> KeyPairGenerator =
+            fun(_: String, _: String?): KeyPairGenerator {
                 Mockito.`when`(keyPairGenerator.genKeyPair()).thenReturn(mockPair)
 
                 return keyPairGenerator
             }
 
-    fun createKeyPairSetup(keyName: String, algorithm: String, keySpec: KeyGenParameterSpec, mockPair: KeyPair) : KeyPairGenerator {
-        val selectedModes = Cipher.DECRYPT_MODE or Cipher.ENCRYPT_MODE
-
-        CliqueConfig.setKeySpecBuilder(createSpecBuilder(keyName, selectedModes, keySpec))
+    fun createKeyPairSetup(keySpec: KeyGenParameterSpec, mockPair: KeyPair) : KeyPairGenerator {
+        CliqueConfig.setKeySpecBuilder(createSpecBuilder(keySpec))
 
         val keyPairGenerator = Mockito.mock(KeyPairGenerator::class.java)
 
-        CliqueConfig.setKeyPairGeneratorCreator(createKeyPairGenerator(mockPair, keyPairGenerator, algorithm, null))
+        CliqueConfig.setKeyPairGeneratorCreator(createKeyPairGenerator(mockPair, keyPairGenerator))
 
         return keyPairGenerator
+    }
+
+    fun switchCliqueConfigForJDK() {
+        CliqueConfig.setStringEncoder { array:ByteArray, _:Int  ->
+            Base64.getEncoder().encodeToString(array)
+        }
+        CliqueConfig.setByteArrayDecoder { string, _ ->
+            Base64.getDecoder().decode(string)
+        }
     }
 }
 
@@ -82,9 +84,16 @@ class TestCipherProviderSpi : Provider(PROVIDER_NAME, 1.0, "Provides test algos 
         }
     }
 
+    class MockSecretKeyProvider(p: Provider) : Provider.Service(p, "KeyGenerator", ENCRYPTION_CAPITAL, SecretKey::class.java.canonicalName, null, null) {
+        override fun newInstance(constructorParameter: Any?): Any {
+            return secretKeyGenerator
+        }
+    }
+
     init {
         putService(MockCipherProviderService(this))
         putService(MockCipherProviderCaseChangeService(this))
+        putService(MockSecretKeyProvider(this))
     }
 
     companion object {
@@ -158,6 +167,21 @@ class TestCipherProviderSpi : Provider(PROVIDER_NAME, 1.0, "Provides test algos 
             override fun engineGetBlockSize(): Int { return -1 }
 
             override fun engineGetOutputSize(inputLen: Int): Int { return -1 }
+        }
+
+        private val secretKeyGenerator = object : KeyGeneratorSpi() {
+            override fun engineInit(random: SecureRandom?) {}
+
+            override fun engineInit(params: AlgorithmParameterSpec?, random: SecureRandom?) {}
+
+            override fun engineInit(keysize: Int, random: SecureRandom?) {}
+
+            override fun engineGenerateKey(): SecretKey {
+                val secretKey = Mockito.mock(SecretKey::class.java)
+                Mockito.`when`(secretKey.encoded).thenReturn("SecretKeyEncodedByteArray".toByteArray(Charsets.UTF_8))
+                return secretKey
+            }
+
         }
     }
 }

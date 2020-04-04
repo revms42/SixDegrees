@@ -39,15 +39,6 @@ class CliqueConfigTest {
         CliqueConfig.setKeyStore(keyStore)
     }
 
-    fun switchCliqueConfigForJDK() {
-        CliqueConfig.setStringEncoder { array:ByteArray, _:Int  ->
-            Base64.getEncoder().encodeToString(array)
-        }
-        CliqueConfig.setByteArrayDecoder { string, _ ->
-            Base64.getDecoder().decode(string)
-        }
-    }
-
     @Test
     fun testGetPrivateKeyFromKeyStore() {
         Mockito.`when`(keyStoreSpi.engineGetKey(ASYM_KEY_PAIR, null)).thenReturn(privateKey)
@@ -72,7 +63,7 @@ class CliqueConfigTest {
         val encryptionDescription = createAsymmetricEncryptionDescription(ENCRYPTION_BACKWARDS)
         val keySpec = Mockito.mock(KeyGenParameterSpec::class.java)
         val mockPair = KeyPair(publicKey, privateKey)
-        val keyPairGenerator = CliqueConfigTestHelper.createKeyPairSetup(ASYM_KEY_PAIR, ENCRYPTION_BACKWARDS, keySpec, mockPair)
+        val keyPairGenerator = CliqueConfigTestHelper.createKeyPairSetup(keySpec, mockPair)
 
         val keyPair = CliqueConfig.createKeyPair(ASYM_KEY_PAIR, encryptionDescription)
 
@@ -100,7 +91,7 @@ class CliqueConfigTest {
 
     @Test
     fun testRoundTripEncodedStringToByteArray() {
-        switchCliqueConfigForJDK()
+        CliqueConfigTestHelper.switchCliqueConfigForJDK()
 
         val mockKey = Mockito.mock(Key::class.java)
         val cipherMock = Cipher.getInstance(ENCRYPTION_BACKWARDS, TestCipherProviderSpi.provider)
@@ -116,7 +107,7 @@ class CliqueConfigTest {
 
     @Test
     fun testRoundTripStringToEncodedString() {
-        switchCliqueConfigForJDK()
+        CliqueConfigTestHelper.switchCliqueConfigForJDK()
 
         val mockKey = Mockito.mock(Key::class.java)
         val cipherMock = Cipher.getInstance(ENCRYPTION_BACKWARDS, TestCipherProviderSpi.provider)
@@ -132,7 +123,7 @@ class CliqueConfigTest {
 
     @Test
     fun testTranscodeString() {
-        switchCliqueConfigForJDK()
+        CliqueConfigTestHelper.switchCliqueConfigForJDK()
 
         val mockKey = Mockito.mock(Key::class.java)
         var backwardsMock = Cipher.getInstance(ENCRYPTION_BACKWARDS, TestCipherProviderSpi.provider)
@@ -163,5 +154,7 @@ class CliqueConfigTest {
         const val ASYM_KEY_PAIR = CliqueConfigTestHelper.ASYM_KEY_PAIR
         const val ENCRYPTION_BACKWARDS = CliqueConfigTestHelper.ENCRYPTION_BACKWARDS
         const val ENCRYPTION_CAPITAL = CliqueConfigTestHelper.ENCRYPTION_CAPITAL
+
+
     }
 }

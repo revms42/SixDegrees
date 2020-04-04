@@ -109,7 +109,7 @@ class User private constructor(
     fun getSubscriptionInvitation(): Invitation? = subscribe()
 
     companion object {
-        fun loadUser(user: String, context: Context): User? {
+        fun loadUser(context: Context, user: String): User? {
             return CliqueConfig.getPrivateKeyFromKeyStore(user)?.let { userKey ->
                 val asymCipher = fun(mode: Int): Cipher { return CliqueConfig.initCipher(CliqueConfig.assymetricEncryption, mode, userKey) }
 
@@ -165,15 +165,10 @@ class User private constructor(
 
                 val encodedUser = CliqueConfig.stringToEncodedString(user, encryptUserKey.invoke())
 
-                val generator = KeyGenerator.getInstance(symmetricDescription.algorithm, CliqueConfig.provider)
-                //TODO: Determine if this needs to be configurable or "strong"
-                val random = SecureRandom()
-                generator.init(symmetricDescription.keySize, random)
-
-                val symKey = generator.generateKey()
+                val symKey = CliqueConfig.createSecretKey(symmetricDescription)
                 val encryptSymKey = fun (): Cipher { return CliqueConfig.initCipher(symmetricDescription, Cipher.ENCRYPT_MODE, symKey!!) }
 
-                val encryptSym = CliqueConfig.byteArrayToEncodedString(symKey!!.encoded, encryptUserKey.invoke())
+                val encryptSym = CliqueConfig.byteArrayToEncodedString(symKey.encoded, encryptUserKey.invoke())
 
                 val encryptSymAlgo = CliqueConfig.stringToEncodedString(symmetricDescription.toString(), encryptUserKey.invoke())
 
