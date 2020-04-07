@@ -40,8 +40,21 @@ data class CliqueAccount(
 
     companion object {
         const val TABLE_NAME = "table_2"
+        /**
+         * In a User this is the user name encoded in the keychain RSA
+         * In a Subscription this is the subscription name encoded in the user private RSA
+         */
         const val COLUMN_USER = "first" // Encrypted using the keychain RSA
+
+        /**
+         * In a User/Subscription this is the symmetric key encoded display name for the account.
+         */
         const val COLUMN_DISPLAY_NAME = "second" // Encrypted using the sym of a given User account
+
+        /**
+         * In a User this is the filter string that is used to search for friends
+         * In a subscription this is the filter string associated with the user that added this account.
+         */
         const val COLUMN_FILTER = "third" // Encrypted using the sym of a given User account
 
         /**
@@ -64,13 +77,13 @@ data class CliqueAccount(
 
         /**
          * In a User this is the symmetric key used to encode other keys.
-         * In a Subscription this is a made-up garbage key.
+         * In a Subscription this points to the User's symmetric key.
          */
         const val COLUMN_SYMMETRIC = "seventh" // Encrypted using the keychain RSA
 
         /**
          * In a User this is the symmetric key algorithm used to generate a cipher with the symmetric key
-         * In a Subscription this is a made-up garbage value.
+         * In a Subscription this is the User's symmetric encryption algorithm.
          */
         const val COLUMN_SYMMETRIC_ALGO = "eighth" // Encrypted using the keychain RSA
 

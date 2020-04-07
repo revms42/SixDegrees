@@ -84,7 +84,13 @@ class TestCipherProviderSpi : Provider(PROVIDER_NAME, 1.0, "Provides test algos 
         }
     }
 
-    class MockSecretKeyProvider(p: Provider) : Provider.Service(p, "KeyGenerator", ENCRYPTION_CAPITAL, SecretKey::class.java.canonicalName, null, null) {
+    class MockSecretKeyCapitalProvider(p: Provider) : Provider.Service(p, "KeyGenerator", ENCRYPTION_CAPITAL, SecretKey::class.java.canonicalName, null, null) {
+        override fun newInstance(constructorParameter: Any?): Any {
+            return secretKeyGenerator
+        }
+    }
+
+    class MockSecretKeyBackwardsProvider(p: Provider) : Provider.Service(p, "KeyGenerator", ENCRYPTION_BACKWARDS, SecretKey::class.java.canonicalName, null, null) {
         override fun newInstance(constructorParameter: Any?): Any {
             return secretKeyGenerator
         }
@@ -93,7 +99,8 @@ class TestCipherProviderSpi : Provider(PROVIDER_NAME, 1.0, "Provides test algos 
     init {
         putService(MockCipherProviderService(this))
         putService(MockCipherProviderCaseChangeService(this))
-        putService(MockSecretKeyProvider(this))
+        putService(MockSecretKeyCapitalProvider(this))
+        putService(MockSecretKeyBackwardsProvider(this))
     }
 
     companion object {
