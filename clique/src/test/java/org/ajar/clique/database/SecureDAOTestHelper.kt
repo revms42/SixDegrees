@@ -27,6 +27,10 @@ open class SecureDaoTestMock {
         return dataMap.values.map { gson.fromJson(it, type) }.toList()
     }
 
+    open fun clear() {
+        dataMap.clear()
+    }
+
     companion object {
         private val gson = Gson()
     }
@@ -50,7 +54,43 @@ class CliqueKeyDAOMock : SecureDaoTestMock(), CliqueKeyDAO {
     }
 }
 
+class MockMutableLiveData<T> : MutableLiveData<T>() {
+
+    private var _value: T? = null
+
+    override fun postValue(value: T) {
+        _value = value
+    }
+
+    override fun getValue(): T? {
+        return _value
+    }
+}
+
 class CliqueAccountDAOMock : SecureDaoTestMock(), CliqueAccountDAO {
+
+    private val filterSubscriptionMap = HashMap<String, MutableLiveData<List<CliqueSubscription>?>>()
+    private val filterRotationMap = HashMap<String, MutableLiveData<List<CliqueRotateDescription>?>>()
+
+    private fun postSubscriptionChange(filter: String) {
+        filterSubscriptionMap[filter]?.postValue(filterAccounts(filter)?.map {account -> CliqueSubscription(account.displayName, account.url, account.publicOne) }?.toList())
+    }
+
+    private fun postRotationChange(filter: String) {
+        filterRotationMap[filter]?.postValue(filterAccounts(filter)?.map { account -> CliqueRotateDescription(account.displayName, account.privateOne) }?.toList())
+    }
+
+    private fun postBothChanges(filter: String) {
+        postSubscriptionChange(filter)
+        postRotationChange(filter)
+    }
+
+    override fun clear() {
+        super.clear()
+        filterSubscriptionMap.clear()
+        filterRotationMap.clear()
+    }
+
     override fun findAccount(user: String): CliqueAccount? {
         return getObject(user, CliqueAccount::class.java)
     }
@@ -80,27 +120,51 @@ class CliqueAccountDAOMock : SecureDaoTestMock(), CliqueAccountDAO {
     }
 
     override fun findSubscriptionKeys(filter: String): LiveData<List<CliqueSubscription>?> {
-        return MutableLiveData<List<CliqueSubscription>?>().also {
-            it.postValue(filterAccounts(filter)?.map {account -> CliqueSubscription(account.displayName, account.url, account.publicOne) }?.toList())
+        if(!filterSubscriptionMap.containsKey(filter)) {
+            filterSubscriptionMap[filter] = MockMutableLiveData()
+        }
+
+        return filterSubscriptionMap[filter]!!.also {
+            postSubscriptionChange(filter)
         }
     }
 
     override fun findRotationKeys(filter: String): LiveData<List<CliqueRotateDescription>?> {
-        return MutableLiveData<List<CliqueRotateDescription>?>().also {
-            it.postValue(filterAccounts(filter)?.map { account -> CliqueRotateDescription(account.displayName, account.privateOne) }?.toList())
+        if(!filterRotationMap.containsKey(filter)) {
+            filterRotationMap[filter] = MockMutableLiveData()
+        }
+
+        return filterRotationMap[filter]!!.also {
+            postRotationChange(filter)
         }
     }
 
     override fun addAccount(account: CliqueAccount) {
         addObject(account.user, account)
+
+        if(filterSubscriptionMap.containsKey(account.filter)) {
+            postBothChanges(account.filter)
+        }
     }
 
     override fun updateAccounts(vararg accounts: CliqueAccount) {
-        accounts.forEach { addAccount(it) }
+        accounts.forEach {
+            addAccount(it)
+
+            if(filterSubscriptionMap.containsKey(it.filter)) {
+                postBothChanges(it.filter)
+            }
+        }
     }
 
     override fun deleteAccounts(vararg accounts: CliqueAccount) {
-        accounts.forEach { removeObject(it.user) }
+        accounts.forEach {
+            removeObject(it.user)
+
+            if(filterSubscriptionMap.containsKey(it.filter)) {
+                postBothChanges(it.filter)
+            }
+        }
     }
 }
 
@@ -121,5 +185,10 @@ object SecureDAOTestHelper {
             override fun keyDao(): CliqueKeyDAO { return keyMock }
         }
         SecureDatabase.setDatabaseForTesting(mockDB)
+    }
+
+    fun clear() {
+        accountMock.clear()
+        keyMock.clear()
     }
 }

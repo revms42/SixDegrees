@@ -77,7 +77,7 @@ class RotationMessage private constructor(val algo: String, val url: String, val
  * Representation of the user of the current account.
  * @param name unencrypted user name associated with the AndroidKeyStore's RSA key used to encrypt the user's data.
  * @param filter the user name encrypted with the user's symmetric encryption, used to filter friends from the database.
- * @param url the publication url of this user encrypted with the user's symmetric encryption.
+ * @param url the unencrypted publication url of this user.
  * @param invitationInfo a CliqueSubscription which represents a portion of the information needed to create an invitation.
  * @param symCipher a function that will initialize a cipher to encrypt or decrypt the user's symmetric key encryption.
  * @param feed a function that encrypts the given plain-text into a string using this user's asymmetric publish key.
@@ -162,8 +162,8 @@ class User private constructor(
 
                     User(
                             user,
-                            filter,
                             CliqueConfig.encodedStringToString(encryptedPublishUrl!!, symCipher.invoke(Cipher.DECRYPT_MODE)!!),
+                            filter,
                             friendRequestInfo,
                             symCipher,
                             feedWriter,
