@@ -188,7 +188,7 @@ class User private constructor(
                 val encodedUser = CliqueConfig.stringToEncodedString(user, encryptUserKey.invoke())
 
                 val symKey = CliqueConfig.createSecretKey(symmetricDescription)
-                val encryptSymKey = fun (): Cipher { return CliqueConfig.initCipher(symmetricDescription, Cipher.ENCRYPT_MODE, symKey!!) }
+                val encryptSymKey = fun (): Cipher { return CliqueConfig.initCipher(symmetricDescription, Cipher.ENCRYPT_MODE, symKey) }
 
                 val encryptSym = CliqueConfig.byteArrayToEncodedString(symKey.encoded, encryptUserKey.invoke())
 
@@ -203,7 +203,7 @@ class User private constructor(
                 val encryptionOne = "$user:feed"
                 val encryptOnePair = CliqueConfig.createKeyPair(encryptionOne, encryption)
 
-                val algoDescEncrypted = CliqueConfig.stringToEncodedString(encryption.algorithm, encryptSymKey.invoke())
+                val algoDescEncrypted = CliqueConfig.stringToEncodedString(encryption.toString(), encryptSymKey.invoke())
 
                 val encryptOnePublic = CliqueConfig.byteArrayToEncodedString(encryptOnePair.public.encoded, encryptSymKey.invoke())
                 val feedPublic = CliqueConfig.stringToEncodedString("$encryptionOne(public)", encryptSymKey.invoke())

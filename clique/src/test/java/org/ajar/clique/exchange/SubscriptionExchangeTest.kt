@@ -12,6 +12,7 @@ import org.junit.Before
 import org.junit.Test
 import org.mockito.Mockito
 import java.security.*
+import java.util.*
 import javax.crypto.Cipher
 
 class SubscriptionExchangeTest {
@@ -22,12 +23,14 @@ class SubscriptionExchangeTest {
     private val publicKey = Mockito.mock(PublicKey::class.java)
 
     private val mockContext = Mockito.mock(Context::class.java)
-    private val mockUserSym = CliqueConfigTestHelper.createSymmetricEncryptionDescription(CliqueConfigTestHelper.ENCRYPTION_CAPITAL)
-    private val mockUserAsym = CliqueConfigTestHelper.createAsymmetricEncryptionDescription(CliqueConfigTestHelper.ENCRYPTION_BACKWARDS)
+    private val mockUserSym = CliqueConfigTestHelper.createSymmetricEncryptionDescription(CliqueConfigTestHelper.ENCRYPTION_BACKWARDS)
+    private val mockUserAsym = CliqueConfigTestHelper.createAsymmetricEncryptionDescription(CliqueConfigTestHelper.ENCRYPTION_CAPITAL)
     private var user: User? = null
 
     private lateinit var exchange: SubscriptionExchange
     private lateinit var exchangeCipher: (mode: Int) -> Cipher
+
+    private lateinit var decoder: (String) -> String
 
     @Before
     fun setup() {
@@ -40,7 +43,7 @@ class SubscriptionExchangeTest {
 
         Mockito.verify(keyStoreSpi).engineLoad(null)
 
-        Mockito.`when`(keyStoreSpi.engineGetKey(UserFacadeTest.USER_NAME, null)).thenReturn(Mockito.mock(PrivateKey::class.java))
+        Mockito.`when`(keyStoreSpi.engineGetKey(USER_NAME, null)).thenReturn(Mockito.mock(PrivateKey::class.java))
 
         CliqueConfig.setKeyStore(keyStore)
 
@@ -48,26 +51,32 @@ class SubscriptionExchangeTest {
         CliqueConfigTestHelper.switchCliqueConfigForJDK()
         CliqueConfig.assymetricEncryption = mockUserAsym // Use the same as the user.
 
-        Mockito.`when`(publicKey.encoded).thenReturn("PublicKeyEncodedByteArray".toByteArray(Charsets.UTF_8))
-        Mockito.`when`(privateKey.encoded).thenReturn("PrivateKeyEncodedByteArray".toByteArray(Charsets.UTF_8))
+        Mockito.`when`(publicKey.encoded).thenReturn(USER_READ_KEY.toByteArray(Charsets.UTF_8))
+        Mockito.`when`(privateKey.encoded).thenReturn(USER_WRITE_KEY.toByteArray(Charsets.UTF_8))
 
         val keySpec = Mockito.mock(KeyGenParameterSpec::class.java)
         val mockPair = KeyPair(publicKey, privateKey)
         CliqueConfigTestHelper.createKeyPairSetup(keySpec, mockPair)
 
-        User.createUser(mockContext, UserFacadeTest.USER_NAME, UserFacadeTest.USER_DISPLAY_NAME, UserFacadeTest.USER_URL, mockUserSym, mockUserAsym)
-        user = User.loadUser(mockContext, UserFacadeTest.USER_NAME)
+        User.createUser(mockContext, USER_NAME, USER_DISPLAY_NAME, USER_URL, mockUserSym, mockUserAsym)
+        user = User.loadUser(mockContext, USER_NAME)
 
         val exchangeEncryption = CliqueConfigTestHelper.createSymmetricEncryptionDescription(CliqueConfigTestHelper.ENCRYPTION_BACKWARDS)
         val key = CliqueConfig.createSecretKey(exchangeEncryption, TestCipherProviderSpi.provider)
 
         exchangeCipher = fun (mode: Int) : Cipher {
-            val cipher = Cipher.getInstance(CliqueConfigTestHelper.ENCRYPTION_BACKWARDS, TestCipherProviderSpi.provider)
+            val cipher = Cipher.getInstance(exchangeEncryption.algorithm, TestCipherProviderSpi.provider)
             cipher.init(mode, key)
             return cipher
         }
 
         exchange = SubscriptionExchange.createExchange(user!!, exchangeCipher)
+
+        val base64Decoder = Base64.getDecoder()
+
+        decoder = fun(string: String) : String {
+            return String(base64Decoder.decode(string), Charsets.UTF_8)
+        }
     }
 
     @Test
@@ -76,15 +85,29 @@ class SubscriptionExchangeTest {
         val invitation = exchange.createInvitation("MockFriend", asymDesc)
 
         Assert.assertNotNull("Invitation should not be null!", invitation)
-        Assert.assertEquals("Invitation URL does not match expected!", "http://obviouslywrong.net", invitation!!.url)
-        Assert.assertEquals("Invitation read key does not match expected!", "not correct either", invitation.readKey)
-        Assert.assertEquals("Invitation read key algo does not match expected!", "not correct either", invitation.readAlgo)
-        Assert.assertEquals("Invitation rotate key does not match expected!", "may not even be able to get this on the fly", invitation.rotateKey)
-        Assert.assertEquals("Invitation rotate key algo does not match expected!", "this might be easier to get", invitation.rotateAlgo)
+        Assert.assertEquals("Invitation URL does not match expected!", USER_URL, decoder(invitation!!.url).reversed())
+        Assert.assertEquals("Invitation read key does not match expected!", USER_READ_KEY, decoder(invitation.readKey).reversed())
+        Assert.assertEquals("Invitation read key algo does not match expected!", mockUserAsym.toString(), decoder(invitation.readAlgo).reversed())
+        // Note: What we actually expect here is a brand new private key created on the fly. But because of the way that Mockito works in this test we will be getting the User private write key
+        // This is because we're requesting an asynchronous key pair and we've already set up Mockito to return the User's info when that is requested
+        Assert.assertEquals("Invitation rotate key does not match expected!", USER_WRITE_KEY, decoder(invitation.rotateKey).reversed())
+        Assert.assertEquals("Invitation rotate key algo does not match expected!", asymDesc.toString(), decoder(invitation.rotateAlgo).reversed())
     }
 
     @Test
     fun testExchangeSubscriptionRespond() {
-        Assert.fail("Not yet implemented")
+        Assert.fail("Not Yet Implemented")
+    }
+
+    companion object {
+        const val USER_NAME = UserFacadeTest.USER_NAME
+        const val USER_DISPLAY_NAME = UserFacadeTest.USER_DISPLAY_NAME
+        const val USER_URL = UserFacadeTest.USER_URL
+        const val USER_READ_KEY = "UserPublicReadKey"
+        const val USER_WRITE_KEY = "UserPrivateWriteKey"
+
+        const val FRIEND_ONE_READ_KEY = UserFacadeTest.FRIEND_ONE_READ_KEY
+        const val FRIEND_ONE_DISPLAY_NAME = UserFacadeTest.FRIEND_ONE_DISPLAY_NAME
+        const val FRIEND_ONE_URL = UserFacadeTest.FRIEND_ONE_URL
     }
 }

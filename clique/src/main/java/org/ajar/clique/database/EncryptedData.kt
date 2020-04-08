@@ -16,8 +16,17 @@ data class CliqueKey(
 
     companion object {
         const val TABLE_NAME = "table_1"
+        /**
+         * Key name
+         */
         const val COLUMN_NAME = "first" // Encrypted with the active user's symmetric encryption
+        /**
+         * Encoded Key
+         */
         const val COLUMN_KEY = "second" // Encrypted with the active user's symmetric encryption
+        /**
+         * Cipher name, not the full description
+         */
         const val COLUMN_CIPHER = "third" // Encrypted with the active user's symmetric encryption
     }
 }
