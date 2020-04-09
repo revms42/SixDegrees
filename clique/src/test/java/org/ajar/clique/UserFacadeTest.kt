@@ -26,8 +26,9 @@ class UserFacadeTest {
     private val publicKey = Mockito.mock(PublicKey::class.java)
 
     private val mockContext = Mockito.mock(Context::class.java)
+    private val mockSystemAsym = CliqueConfigTestHelper.createAsymmetricEncryptionDescription(CliqueConfigTestHelper.ENCRYPTION_MINUS)
     private val mockUserSym = CliqueConfigTestHelper.createSymmetricEncryptionDescription(CliqueConfigTestHelper.ENCRYPTION_BACKWARDS)
-    private val mockUserAsym = CliqueConfigTestHelper.createAsymmetricEncryptionDescription(CliqueConfigTestHelper.ENCRYPTION_CAPITAL)
+    private val mockUserAsym = CliqueConfigTestHelper.createAsymmetricEncryptionDescription(CliqueConfigTestHelper.ENCRYPTION_PLUS)
     private var user: User? = null
 
     private lateinit var decoder: (String) -> String
@@ -49,7 +50,7 @@ class UserFacadeTest {
 
         SecureDAOTestHelper.setupMockDatabase()
         CliqueConfigTestHelper.switchCliqueConfigForJDK()
-        CliqueConfig.assymetricEncryption = mockUserAsym // Use the same as the user.
+        CliqueConfig.assymetricEncryption = mockSystemAsym
 
         Mockito.`when`(publicKey.encoded).thenReturn("PublicKeyEncodedByteArray".toByteArray(Charsets.UTF_8))
         Mockito.`when`(privateKey.encoded).thenReturn("PrivateKeyEncodedByteArray".toByteArray(Charsets.UTF_8))
@@ -111,6 +112,11 @@ class UserFacadeTest {
         Assert.assertEquals("User should be listed as the subscriber of the account!", USER_DISPLAY_NAME.reversed(), decoder(friends?.value?.get(0)?.subscriber!!))
         Assert.assertEquals("User's URL should be listed as the subscription in the first friend!", USER_URL.reversed(), decoder(friends.value?.get(0)?.subscription!!))
 
+        val rotations = SecureDatabase.instance?.accountDao()?.findRotationKeys(user!!.filter)
+
+        Assert.assertEquals("User should have themselves (only) in their rotations list!", 1, rotations?.value?.size)
+        Assert.assertEquals("User should be listed as the subscriber of the account!", USER_DISPLAY_NAME.reversed(), decoder(rotations?.value?.get(0)?.subscriber!!))
+
         val key = CliqueConfig.createSecretKey(mockUserSym, TestCipherProviderSpi.provider)
 
         // The friends should have their information encrypted with the user's sym encryption.
@@ -154,6 +160,9 @@ class UserFacadeTest {
         Assert.assertEquals("User's friend's display name does not match expected!", FRIEND_ONE_DISPLAY_NAME.reversed(), decoder(friends.value?.get(1)?.subscriber!!))
         Assert.assertEquals("User's friend's url does not match expected!", FRIEND_ONE_URL.reversed(), decoder(friends.value?.get(1)?.subscription!!))
         Assert.assertEquals("User's friend's read key does not match expected!", FRIEND_ONE_READ_KEY.reversed(), decoder(friends.value?.get(1)?.feedReadKey!!))
+        Assert.assertEquals("User should have exactly two rotations in their rotations list!", 2, rotations.value?.size)
+        Assert.assertEquals("User should be listed as the first subscriber of the account!", USER_DISPLAY_NAME.reversed(), decoder(rotations.value?.get(0)?.subscriber!!))
+        Assert.assertEquals("User's friend should be listed as the second subscriber of the account!", FRIEND_ONE_DISPLAY_NAME.reversed(), decoder(rotations.value?.get(1)?.subscriber!!))
     }
 
     companion object {

@@ -55,24 +55,6 @@ private fun writeFeedMessage(name: String, message: String, symCipher: (Int) -> 
     }
 }
 
-class RotationMessage private constructor(val algo: String, val url: String, val key: String) {
-
-    override fun toString(): String {
-        TODO("Make Serialization Possible!")
-    }
-
-    companion object {
-        internal fun create(algo: String, url: String, key: String): RotationMessage {
-            return RotationMessage(algo, url, key)
-        }
-
-        internal fun fromString(serializedRotation: String): RotationMessage {
-            TODO("Make Deserialization Possible")
-        }
-    }
-}
-
-
 /**
  * Representation of the user of the current account.
  * @param name unencrypted user name associated with the AndroidKeyStore's RSA key used to encrypt the user's data.
@@ -128,7 +110,7 @@ class User private constructor(
 
         SecureDatabase.instance?.accountDao()?.addAccount(CliqueAccount(
                 dbName,
-                friendName,
+                friendInfo.name!!,
                 filter,
                 publicOneName,
                 privateOneName,
@@ -270,17 +252,44 @@ class Friend private constructor(val displayName: String, val url: String, priva
 }
 
 /**
- * rotate is a cliqueKey name to subscriber encrypted rotation message transform.
+ * Rotation is a class that provides a way to generate the information necessary to create a
+ * key rotation message when a new key is provided.
+ * @param rotate a function that takes a new clique key name, a new url (both encoded), and a (this) Rotation and generates rotation information
+ * for the given user, placing it into this Rotation.
  */
-class Rotation private constructor(val name: String, private val rotate: (String) -> String) {
+class Rotation private constructor(val name: String, private val rotate: (String, String, Rotation) -> Unit) {
 
-    fun rotateMessageForKey(cliqueKeyName: String): String = rotate(cliqueKeyName)
+    private var _key: String? = null
+    internal val key: String?
+        get() = _key
+
+    private var _url: String? = null
+    internal val url: String?
+        get() = _url
+
+    private var _cipher: String? = null
+    internal val cipher: String?
+        get() = _cipher
+
+    /**
+     * Sets up this rotation objection for the given user off the provided publish key name and url
+     * @param newKey the user symmetric encrypted name of the new publish key.
+     * @param newUrl the user symmetric encrypted url used to publish.
+     */
+    internal fun initialize(newKey: String, newUrl: String) {
+        rotate.invoke(newKey, newUrl, this)
+    }
 
     companion object {
-        internal fun fromRotationDescription(description: CliqueRotateDescription, encodedUrl: String, symCipher: (Int) -> Cipher?): Rotation {
+        /**
+         * This produces a Rotation object that will create a RotationMessage when "rotateMessageForKey" is
+         * called and a new clique key name is provided (the assumption being that the key has already
+         * been created).
+         */
+        internal fun fromRotationDescription(description: CliqueRotateDescription, symCipher: (Int) -> Cipher?): Rotation {
             val name = CliqueConfig.encodedStringToString(description.subscriber, symCipher.invoke(Cipher.DECRYPT_MODE)!!)
 
-            val rotate = fun(keyName: String): String {
+            val rotate = fun(keyName: String, encodedUrl: String, rotation: Rotation) {
                 return SecureDatabase.instance?.keyDao()?.findKey(keyName)?.let { newKey ->
                     val transcode = fun (value: String): String =
                             CliqueConfig.transcodeString(
@@ -289,12 +298,10 @@ class Rotation private constructor(val name: String, private val rotate: (String
                                     cliqueKeyToCipher(description.rotateKey, Cipher.ENCRYPT_MODE, symCipher)!!
                             )
 
-                    RotationMessage.create(
-                            transcode(newKey.cipher),
-                            transcode(encodedUrl),
-                            transcode(newKey.key)
-                    )
-                }.toString()
+                    rotation._cipher = transcode(newKey.cipher)
+                    rotation._key = transcode(newKey.key)
+                    rotation._url = transcode(encodedUrl)
+                }!!
             }
 
             return Rotation(name, rotate)

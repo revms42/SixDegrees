@@ -14,14 +14,27 @@ import javax.crypto.Cipher
  * They then create a key pair, and send you the private half to put into the private one field for their account object on your side.
  * They keep the public half of the key pair and put it in their public two field for your account on their side.
  *
- * @param url this user's publish url
- * @param readKey this user's public read key for the url
- * @param readAlgo the algo used by the read key
- * @param rotateKey a freshly created asymmetric private key for the recipient to use to publish their rotate requests to you
- * @param rotateAlgo the algo used by the rotate key
+ * @property url this user's publish url
+ * @property readKey this user's public read key for the url
+ * @property readAlgo the algo used by the read key
+ * @property rotateKey a freshly created asymmetric private key for the recipient to use to publish their rotate requests to you
+ * @property rotateAlgo the algo used by the rotate key
  */
+interface Invitation {
+    val url: String
+    val readKey: String
+    val readAlgo: String
+    val rotateKey: String
+    val rotateAlgo: String
+}
 
-data class Invitation(val url: String, val readKey: String, val readAlgo: String, val rotateKey: String, val rotateAlgo: String)
+private data class InvitationData(
+        override val url: String,
+        override val readKey: String,
+        override val readAlgo: String,
+        override val rotateKey: String,
+        override val rotateAlgo: String
+) : Invitation
 
 class SubscriptionExchange private constructor(private val user: User, private val exchangeCipher: (Int) -> Cipher?) {
 
@@ -37,12 +50,15 @@ class SubscriptionExchange private constructor(private val user: User, private v
             var privateOne: String? = null,
             var privateOneAlgo: String? = null
     ) {
-        val ready = listOf(name, url, readKey, readAlgo, publicTwo, publicTwoAlgo, privateOne, privateOneAlgo).none { it == null }
+        val ready: Boolean
+            get() {
+                return listOf(name, url, readKey, readAlgo, publicTwo, publicTwoAlgo, privateOne, privateOneAlgo).none { it == null }
+            }
     }
 
-    private val friendInfo: FriendInfo = FriendInfo()
+    internal val friendInfo: FriendInfo = FriendInfo()
 
-    fun createInvitation(friendName: String, asymDescription: AsymmetricEncryptionDescription = CliqueConfig.assymetricEncryption) : Invitation? {
+    fun createInvitation(friendName: String, rotationKeyPairEncryption: AsymmetricEncryptionDescription = CliqueConfig.assymetricEncryption) : Invitation? {
         return user.invitationInfo.invoke()?.let { invitationInfo ->
             val transcodedReadInfo = SecureDatabase.instance?.keyDao()?.findKey(invitationInfo.feedReadKey)?.let { readCliqueKey ->
                 val keyAlgoDesc = CliqueConfig.transcodeString(readCliqueKey.cipher, user.symCipher.invoke(Cipher.DECRYPT_MODE)!!, exchangeCipher.invoke(Cipher.ENCRYPT_MODE)!!)
@@ -52,19 +68,21 @@ class SubscriptionExchange private constructor(private val user: User, private v
 
             val transcodedUrl = CliqueConfig.transcodeString(invitationInfo.subscription, user.symCipher.invoke(Cipher.DECRYPT_MODE)!!, exchangeCipher.invoke(Cipher.ENCRYPT_MODE)!!)
 
-            CliqueConfig.createKeyPair(friendName, asymDescription).let { pair ->
-                val encryptedCipherInfo = CliqueConfig.stringToEncodedString(asymDescription.toString(), user.symCipher.invoke(Cipher.ENCRYPT_MODE)!!)
+            CliqueConfig.createKeyPair(friendName, rotationKeyPairEncryption).let { pair ->
+                val encryptedCipherInfo = CliqueConfig.stringToEncodedString(rotationKeyPairEncryption.toString(), user.symCipher.invoke(Cipher.ENCRYPT_MODE)!!)
 
                 friendInfo.name = CliqueConfig.stringToEncodedString(friendName, user.symCipher.invoke(Cipher.ENCRYPT_MODE)!!)
                 friendInfo.publicTwo = CliqueConfig.byteArrayToEncodedString(pair.public.encoded, user.symCipher.invoke(Cipher.ENCRYPT_MODE)!!)
                 friendInfo.publicTwoAlgo = encryptedCipherInfo
 
-                return Invitation(
+                val exchangeRotateCipherInfo = CliqueConfig.stringToEncodedString(rotationKeyPairEncryption.toString(), exchangeCipher.invoke(Cipher.ENCRYPT_MODE)!!)
+
+                return InvitationData(
                         transcodedUrl,
                         transcodedReadInfo!!.key,
                         transcodedReadInfo.desc,
                         CliqueConfig.byteArrayToEncodedString(pair.private.encoded, exchangeCipher.invoke(Cipher.ENCRYPT_MODE)!!),
-                        encryptedCipherInfo
+                        exchangeRotateCipherInfo
                 )
             }
         }
