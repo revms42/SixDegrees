@@ -73,11 +73,11 @@ class CliqueAccountDAOMock : SecureDaoTestMock(), CliqueAccountDAO {
     private val filterRotationMap = HashMap<String, MutableLiveData<List<CliqueRotateDescription>?>>()
 
     private fun postSubscriptionChange(filter: String) {
-        filterSubscriptionMap[filter]?.postValue(filterAccounts(filter)?.map {account -> CliqueSubscription(account.displayName, account.url, account.publicOne) }?.toList())
+        filterSubscriptionMap[filter]?.postValue(filterAccounts(filter)?.map {account -> CliqueSubscription(account.displayName, account.url, account.key1) }?.toList())
     }
 
     private fun postRotationChange(filter: String) {
-        filterRotationMap[filter]?.postValue(filterAccounts(filter)?.map { account -> CliqueRotateDescription(account.displayName, account.privateOne) }?.toList())
+        filterRotationMap[filter]?.postValue(filterAccounts(filter)?.map { account -> CliqueRotateDescription(account.displayName, account.key2) }?.toList())
     }
 
     private fun postBothChanges(filter: String) {
@@ -100,11 +100,11 @@ class CliqueAccountDAOMock : SecureDaoTestMock(), CliqueAccountDAO {
     }
 
     override fun findPublishKey(user: String): String? {
-        return findAccount(user)?.privateOne
+        return findAccount(user)?.key2
     }
 
     override fun findFriendRequestInfo(user: String): CliqueSubscription? {
-        return findAccount(user)?.let { CliqueSubscription(it.displayName, it.url, it.publicOne) }
+        return findAccount(user)?.let { CliqueSubscription(it.displayName, it.url, it.key2) }
     }
 
     override fun findPublishUrlForUser(user: String): String? {

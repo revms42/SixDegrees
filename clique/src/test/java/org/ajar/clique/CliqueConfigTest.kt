@@ -1,7 +1,8 @@
 package org.ajar.clique
 
-import android.security.keystore.KeyGenParameterSpec
-import org.ajar.clique.CliqueConfigTestHelper.createAsymmetricEncryptionDescription
+import org.ajar.clique.encryption.AsymmetricEncryptionDesc
+import org.ajar.clique.encryption.CipherProvider
+import org.ajar.clique.encryption.SymmetricEncryptionDesc
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Before
@@ -9,16 +10,19 @@ import org.junit.Test
 import org.mockito.Mockito
 import java.security.*
 import java.security.cert.Certificate
-import java.util.*
 import javax.crypto.Cipher
+import javax.crypto.SecretKey
 
 class CliqueConfigTest {
 
+    private var asym = AsymmetricEncryptionDesc.DEFAULT
+    private var sym = SymmetricEncryptionDesc.DEFAULT
     private lateinit var provider: Provider
     private lateinit var keyStoreSpi: KeyStoreSpi
     private lateinit var keyStore: KeyStore
     private lateinit var privateKey: PrivateKey
     private lateinit var publicKey: PublicKey
+    private lateinit var secretKey: SecretKey
 
     class MockKeyStore(keyStoreSpi: KeyStoreSpi, provider: Provider) : KeyStore(keyStoreSpi, provider, KEYSTORE_NAME)
 
@@ -35,16 +39,28 @@ class CliqueConfigTest {
 
         privateKey = Mockito.mock(PrivateKey::class.java)
         publicKey = Mockito.mock(PublicKey::class.java)
+        secretKey = Mockito.mock(SecretKey::class.java)
 
         CliqueConfig.setKeyStore(keyStore)
+
+        asym.createKeyGenSpec = CliqueTestHelper.createTestRSAParameters(asym)
+        sym.createKeyGenSpec = CliqueTestHelper.createTestAESParameters()
     }
 
     @Test
     fun testGetPrivateKeyFromKeyStore() {
-        Mockito.`when`(keyStoreSpi.engineGetKey(ASYM_KEY_PAIR, null)).thenReturn(privateKey)
+        Mockito.`when`(keyStoreSpi.engineGetKey(ASYM_KEY_PAIR, "".toCharArray())).thenReturn(privateKey)
 
-        val testKey = CliqueConfig.getPrivateKeyFromKeyStore(ASYM_KEY_PAIR)
+        val testKey = CliqueConfig.getPrivateKeyFromKeyStore(ASYM_KEY_PAIR,"")
         assertEquals("Private Keys do not match: $testKey != $privateKey", testKey, privateKey)
+    }
+
+    @Test
+    fun testGetSecretKeyFromKeyStore() {
+        Mockito.`when`(keyStoreSpi.engineGetKey(SYM_KEY, "".toCharArray())).thenReturn(secretKey)
+
+        val testKey = CliqueConfig.getSecretKeyFromKeyStore(SYM_KEY,"")
+        assertEquals("Private Keys do not match: $testKey != $secretKey", testKey, secretKey)
     }
 
     @Test
@@ -59,102 +75,69 @@ class CliqueConfigTest {
     }
 
     @Test
-    fun testCreateKeyPair() {
-        val encryptionDescription = createAsymmetricEncryptionDescription(ENCRYPTION_BACKWARDS)
-        val keySpec = Mockito.mock(KeyGenParameterSpec::class.java)
-        val mockPair = KeyPair(publicKey, privateKey)
-        val keyPairGenerator = CliqueConfigTestHelper.createKeyPairSetup(keySpec, mockPair)
-
-        val keyPair = CliqueConfig.createKeyPair(ASYM_KEY_PAIR, encryptionDescription)
-
-        Mockito.verify(keyPairGenerator).initialize(keySpec)
-        Mockito.verifyNoMoreInteractions(keyStoreSpi)
-
-        assertEquals("KeyPairs do not match: $mockPair != $keyPair", keyPair, mockPair)
-        assertEquals("Private key does not match: ${mockPair.private} != ${keyPair.private}", keyPair.private, mockPair.private)
-        assertEquals("Public key does not match: ${mockPair.public} != ${keyPair.public}", keyPair.public, mockPair.public)
-
-        // TODO: Find a way to actually verify that the keystore stores the keys? Maybe not possible?
-        Mockito.`when`(keyStoreSpi.engineGetKey(ASYM_KEY_PAIR, null)).thenReturn(privateKey)
-
-        var testKey = CliqueConfig.getPrivateKeyFromKeyStore(ASYM_KEY_PAIR)
-        assertEquals("Private Keys do not match: $testKey != $privateKey", privateKey, testKey)
-
-        val certificate = Mockito.mock(Certificate::class.java)
-        Mockito.`when`(certificate.publicKey).thenReturn(publicKey)
-
-        Mockito.`when`(keyStoreSpi.engineGetCertificate(ASYM_KEY_PAIR)).thenReturn(certificate)
-
-        testKey = CliqueConfig.getPublicKeyFromKeyStore(ASYM_KEY_PAIR)
-        assertEquals("Public Keys do not match: $testKey != $publicKey", publicKey, testKey)
-    }
-
-    @Test
     fun testRoundTripEncodedStringToByteArray() {
-        CliqueConfigTestHelper.switchCliqueConfigForJDK()
+        CliqueTestHelper.switchCliqueConfigForJDK()
 
-        val mockKey = Mockito.mock(Key::class.java)
-        val cipherMock = Cipher.getInstance(ENCRYPTION_BACKWARDS, TestCipherProviderSpi.provider)
-        cipherMock.init(Cipher.ENCRYPT_MODE, mockKey)
+        val key = sym.generateSecretKey()
+        val provider = CipherProvider.Symmetric(sym)
 
         val byteArray = "The String to be encoded".toByteArray(Charsets.UTF_8)
 
-        val reversed = CliqueConfig.byteArrayToEncodedString(byteArray, cipherMock)
-        val restored = CliqueConfig.encodedStringToByteArray(reversed, cipherMock)
+        var cipher = provider.cipher(Cipher.ENCRYPT_MODE, key)
+        val reversed = CliqueConfig.byteArrayToEncodedString(byteArray, cipher)
+
+        cipher = provider.cipher(Cipher.DECRYPT_MODE, key)
+        val restored = CliqueConfig.encodedStringToByteArray(reversed, cipher)
 
         assertArrayEquals("Input array does not equal output array!", byteArray, restored)
     }
 
     @Test
     fun testRoundTripStringToEncodedString() {
-        CliqueConfigTestHelper.switchCliqueConfigForJDK()
+        CliqueTestHelper.switchCliqueConfigForJDK()
 
-        val mockKey = Mockito.mock(Key::class.java)
-        val cipherMock = Cipher.getInstance(ENCRYPTION_BACKWARDS, TestCipherProviderSpi.provider)
-        cipherMock.init(Cipher.ENCRYPT_MODE, mockKey)
+        val key = sym.generateSecretKey()
+        val provider = CipherProvider.Symmetric(sym)
 
         val targetString = "The String to be encoded"
 
-        val reversed = CliqueConfig.stringToEncodedString(targetString, cipherMock)
-        val restored = CliqueConfig.encodedStringToString(reversed, cipherMock)
+        var cipher = provider.cipher(Cipher.ENCRYPT_MODE, key)
+        val reversed = CliqueConfig.stringToEncodedString(targetString, cipher)
+
+        cipher = provider.cipher(Cipher.DECRYPT_MODE, key)
+        val restored = CliqueConfig.encodedStringToString(reversed, cipher)
 
         assertEquals("Input string does not equal output string!", targetString, restored)
     }
 
     @Test
     fun testTranscodeString() {
-        CliqueConfigTestHelper.switchCliqueConfigForJDK()
+        CliqueTestHelper.switchCliqueConfigForJDK()
 
-        val mockKey = Mockito.mock(Key::class.java)
-        var backwardsMock = Cipher.getInstance(ENCRYPTION_BACKWARDS, TestCipherProviderSpi.provider)
-        backwardsMock.init(Cipher.ENCRYPT_MODE, mockKey)
+        val symKey = sym.generateSecretKey()
+        val symProvider = CipherProvider.Symmetric(sym)
 
-        var targetString = "The String to be encoded"
+        val asymKey = asym.generateKeyPair()
+        val asymProvider = CipherProvider.Private(asym)
 
-        val reversed = CliqueConfig.stringToEncodedString(targetString, backwardsMock)
+        val targetString = "The String to be encoded"
 
-        backwardsMock = Cipher.getInstance(ENCRYPTION_BACKWARDS, TestCipherProviderSpi.provider)
-        backwardsMock.init(Cipher.DECRYPT_MODE, mockKey)
+        val asymPublicCipher = asymProvider.cipher(Cipher.ENCRYPT_MODE, asymKey.public)
+        val asymmed = CliqueConfig.stringToEncodedString(targetString, asymPublicCipher)
 
-        val capitalizeMock = Cipher.getInstance(ENCRYPTION_CAPITAL, TestCipherProviderSpi.provider)
-        capitalizeMock.init(Cipher.ENCRYPT_MODE, mockKey)
+        val asymPrivateCipher = asymProvider.cipher(Cipher.DECRYPT_MODE, asymKey.private)
+        val symWriteCipher = symProvider.cipher(Cipher.ENCRYPT_MODE, symKey)
+        val transcoded = CliqueConfig.transcodeString(asymmed, asymPrivateCipher, symWriteCipher)
 
-        val transcoded = CliqueConfig.transcodeString(reversed, backwardsMock, capitalizeMock)
+        val symReadCipher = symProvider.cipher(Cipher.DECRYPT_MODE, symKey)
+        val restored = CliqueConfig.encodedStringToString(transcoded, symReadCipher)
 
-        val deTransCoded = String(Base64.getDecoder().decode(transcoded), Charsets.UTF_8)
-
-        targetString = targetString.toUpperCase()
-
-        assertEquals("Input string does not equal anticipated string: $deTransCoded != $targetString", targetString, deTransCoded)
+        assertEquals("Input string does not equal anticipated string: $restored != $targetString", targetString, restored)
     }
 
     companion object {
-        const val KEYSTORE_NAME = CliqueConfigTestHelper.KEYSTORE_NAME
-
-        const val ASYM_KEY_PAIR = CliqueConfigTestHelper.ASYM_KEY_PAIR
-        const val ENCRYPTION_BACKWARDS = CliqueConfigTestHelper.ENCRYPTION_BACKWARDS
-        const val ENCRYPTION_CAPITAL = CliqueConfigTestHelper.ENCRYPTION_CAPITAL
-
-
+        private const val KEYSTORE_NAME = "testKeyStore"
+        private const val ASYM_KEY_PAIR = "asymKeyPair"
+        private const val SYM_KEY = "symKey"
     }
 }

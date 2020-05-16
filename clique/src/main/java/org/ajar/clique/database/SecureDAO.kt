@@ -26,10 +26,10 @@ interface CliqueAccountDAO {
     @Query("SELECT ${CliqueAccount.COLUMN_SYMMETRIC}, ${CliqueAccount.COLUMN_SYMMETRIC_ALGO} FROM ${CliqueAccount.TABLE_NAME} WHERE ${CliqueAccount.COLUMN_USER} = :user LIMIT 1" )
     fun findSymmetricDesc(user: String): CliqueSymmetricDescription?
 
-    @Query("SELECT ${CliqueAccount.COLUMN_PRIVATE_1} FROM ${CliqueAccount.TABLE_NAME} WHERE ${CliqueAccount.COLUMN_USER} = :user LIMIT 1")
+    @Query("SELECT ${CliqueAccount.COLUMN_KEY_1} FROM ${CliqueAccount.TABLE_NAME} WHERE ${CliqueAccount.COLUMN_USER} = :user LIMIT 1")
     fun findPublishKey(user: String): String?
 
-    @Query("SELECT ${CliqueAccount.COLUMN_DISPLAY_NAME}, ${CliqueAccount.COLUMN_URL}, ${CliqueAccount.COLUMN_PUBLIC_1} FROM ${CliqueAccount.TABLE_NAME} WHERE ${CliqueAccount.COLUMN_USER} = :user LIMIT 1")
+    @Query("SELECT ${CliqueAccount.COLUMN_DISPLAY_NAME}, ${CliqueAccount.COLUMN_URL}, ${CliqueAccount.COLUMN_KEY_2} FROM ${CliqueAccount.TABLE_NAME} WHERE ${CliqueAccount.COLUMN_USER} = :user LIMIT 1")
     fun findFriendRequestInfo(user: String): CliqueSubscription?
 
     @Query("SELECT ${CliqueAccount.COLUMN_URL} FROM ${CliqueAccount.TABLE_NAME} WHERE ${CliqueAccount.COLUMN_USER} = :user LIMIT 1")
@@ -38,10 +38,10 @@ interface CliqueAccountDAO {
     @Query("SELECT ${CliqueAccount.COLUMN_FILTER} FROM ${CliqueAccount.TABLE_NAME} WHERE ${CliqueAccount.COLUMN_USER} = :user LIMIT 1")
     fun findFilterForUser(user: String): String?
 
-    @Query("SELECT ${CliqueAccount.COLUMN_DISPLAY_NAME}, ${CliqueAccount.COLUMN_URL}, ${CliqueAccount.COLUMN_PUBLIC_1} FROM ${CliqueAccount.TABLE_NAME} WHERE ${CliqueAccount.COLUMN_FILTER} = :filter")
+    @Query("SELECT ${CliqueAccount.COLUMN_DISPLAY_NAME}, ${CliqueAccount.COLUMN_URL}, ${CliqueAccount.COLUMN_KEY_2} FROM ${CliqueAccount.TABLE_NAME} WHERE ${CliqueAccount.COLUMN_FILTER} = :filter")
     fun findSubscriptionKeys(filter: String): LiveData<List<CliqueSubscription>?>
 
-    @Query("SELECT ${CliqueAccount.COLUMN_DISPLAY_NAME}, ${CliqueAccount.COLUMN_PRIVATE_1} FROM ${CliqueAccount.TABLE_NAME} WHERE ${CliqueAccount.COLUMN_FILTER} = :filter")
+    @Query("SELECT ${CliqueAccount.COLUMN_DISPLAY_NAME}, ${CliqueAccount.COLUMN_KEY_1} FROM ${CliqueAccount.TABLE_NAME} WHERE ${CliqueAccount.COLUMN_FILTER} = :filter")
     fun findRotationKeys(filter: String): LiveData<List<CliqueRotateDescription>?>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)

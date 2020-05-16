@@ -54,6 +54,8 @@ dependencies {
 
     // Mockito
     testImplementation "org.mockito:mockito-core:2.28.2"
+
+    androidTestImplementation "org.jetbrains.kotlin:kotlin-stdlib-jdk7:$kotlin_version"
 }
 repositories {
     mavenCentral()

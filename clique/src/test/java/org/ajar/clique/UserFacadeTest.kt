@@ -1,11 +1,11 @@
 package org.ajar.clique
 
 import android.content.Context
-import android.security.keystore.KeyGenParameterSpec
 import org.ajar.clique.database.CliqueAccount
 import org.ajar.clique.database.CliqueSubscription
 import org.ajar.clique.database.SecureDAOTestHelper
 import org.ajar.clique.database.SecureDatabase
+import org.ajar.clique.encryption.*
 import org.ajar.clique.facade.Friend
 import org.ajar.clique.facade.User
 import org.junit.After
@@ -14,28 +14,58 @@ import org.junit.Before
 import org.junit.Test
 import org.mockito.Mockito
 import java.security.*
-import java.util.*
 import javax.crypto.Cipher
+import javax.crypto.SecretKey
 
 class UserFacadeTest {
 
+    private val mockContext = Mockito.mock(Context::class.java)
+    private val userSym = SymmetricEncryptionDesc.DEFAULT
+    private val userAsym = AsymmetricEncryptionDesc.DEFAULT
+    private val userSymCipherProvider = CipherProvider.Symmetric(userSym)
+
+    private val configCipherPublicProvider = CipherProvider.Symmetric(SymmetricEncryptionDesc.DEFAULT)
+
+    private lateinit var provider: Provider
     private lateinit var keyStoreSpi: KeyStoreSpi
     private lateinit var keyStore: KeyStore
+    private lateinit var symKey: SecretKey
+    private var configKey: Key? = null
 
-    private val privateKey = Mockito.mock(PrivateKey::class.java)
-    private val publicKey = Mockito.mock(PublicKey::class.java)
-
-    private val mockContext = Mockito.mock(Context::class.java)
-    private val mockSystemAsym = CliqueConfigTestHelper.createAsymmetricEncryptionDescription(CliqueConfigTestHelper.ENCRYPTION_MINUS)
-    private val mockUserSym = CliqueConfigTestHelper.createSymmetricEncryptionDescription(CliqueConfigTestHelper.ENCRYPTION_BACKWARDS)
-    private val mockUserAsym = CliqueConfigTestHelper.createAsymmetricEncryptionDescription(CliqueConfigTestHelper.ENCRYPTION_PLUS)
     private var user: User? = null
 
-    private lateinit var decoder: (String) -> String
+    private fun encryptedSym(string: String): String =
+            CliqueConfig.stringToEncodedString(string, userSymCipherProvider.cipher(Cipher.ENCRYPT_MODE, symKey))
+
+    private fun decryptedSym(string: String): String =
+            CliqueConfig.encodedStringToString(string, userSymCipherProvider.cipher(Cipher.DECRYPT_MODE, symKey))
+
+    private fun encryptedConfig(string: String): String =
+            CliqueConfig.stringToEncodedString(string, configCipherPublicProvider.cipher(Cipher.ENCRYPT_MODE, configKey!!))
+
+    private fun decryptedConfig(string: String): String =
+            CliqueConfig.encodedStringToString(string, configCipherPublicProvider.cipher(Cipher.DECRYPT_MODE, configKey!!))
+
+    private fun decryptedSymKey(string: String): ByteArray =
+            CliqueConfig.encodedStringToByteArray(string, configCipherPublicProvider.cipher(Cipher.DECRYPT_MODE, configKey!!))
+
+    private fun loadSymKey() {
+        val encryptedUserName = encryptedConfig(USER_NAME)
+        val account = SecureDatabase.instance!!.accountDao().findAccount(encryptedUserName)
+
+        val symAlgo = decryptedConfig(account!!.algo)
+        val desc = SymmetricEncryptionDesc.fromString(symAlgo)
+
+        val encryptedKey = decryptedSymKey(account.sym)
+
+        symKey = desc.secretKeyFromBytes(encryptedKey)
+    }
 
     @Before
     fun setup() {
-        val provider = TestCipherProviderSpi.provider
+        CliqueTestHelper.switchCliqueConfigForJDK()
+
+        provider = Mockito.mock(Provider::class.java)
         CliqueConfig.provider = provider
 
         keyStoreSpi = Mockito.mock(KeyStoreSpi::class.java)
@@ -44,40 +74,51 @@ class UserFacadeTest {
 
         Mockito.verify(keyStoreSpi).engineLoad(null)
 
-        Mockito.`when`(keyStoreSpi.engineGetKey(USER_NAME, null)).thenReturn(Mockito.mock(PrivateKey::class.java))
-
         CliqueConfig.setKeyStore(keyStore)
-
         SecureDAOTestHelper.setupMockDatabase()
-        CliqueConfigTestHelper.switchCliqueConfigForJDK()
-        CliqueConfig.assymetricEncryption = mockSystemAsym
 
-        Mockito.`when`(publicKey.encoded).thenReturn("PublicKeyEncodedByteArray".toByteArray(Charsets.UTF_8))
-        Mockito.`when`(privateKey.encoded).thenReturn("PrivateKeyEncodedByteArray".toByteArray(Charsets.UTF_8))
-
-        val base64Decoder = Base64.getDecoder()
-
-        decoder = fun(string: String) : String {
-            return String(base64Decoder.decode(string), Charsets.UTF_8)
+        AsymmetricEncryptionDesc.setKeyPairGeneratorCreator { algo, _ ->
+            KeyPairGenerator.getInstance(algo)
         }
+
+        val captureKey = fun(key: Key) {
+            if(configKey == null) configKey = key
+        }
+
+        val originalEncryption = CliqueConfig.tableNameEncryption
+        val wrappedEncryption = SymetricEncryptionWrapper(originalEncryption, captureKey)
+        CliqueConfig.tableNameEncryption = wrappedEncryption
+
+        userAsym.createKeyGenSpec = CliqueTestHelper.createTestRSAParameters(userAsym)
+        userSym.createKeyGenSpec = CliqueTestHelper.createTestAESParameters()
     }
 
     @After
     fun tearDown() {
         SecureDAOTestHelper.clear()
+        CliqueConfig.getKeyStore()?.deleteEntry(USER_NAME)
     }
 
     @Test
-    fun testCreateUser() {
-        val keySpec = Mockito.mock(KeyGenParameterSpec::class.java)
-        val mockPair = KeyPair(publicKey, privateKey)
-        CliqueConfigTestHelper.createKeyPairSetup(keySpec, mockPair)
+    fun createUser() {
+        User.createUser(mockContext, USER_NAME, USER_PASSWORD, USER_DISPLAY_NAME, USER_URL, userSym, userAsym)
 
-        User.createUser(mockContext, USER_NAME, USER_DISPLAY_NAME, USER_URL, mockUserSym, mockUserAsym)
-        user = User.loadUser(mockContext, USER_NAME)
+        Mockito.verify(keyStoreSpi).engineSetEntry(
+                Mockito.eq(USER_NAME),
+                Mockito.any(KeyStore.SecretKeyEntry::class.java),
+                Mockito.any(KeyStore.PasswordProtection::class.java)
+        )
+
+        Mockito.`when`(keyStoreSpi.engineGetKey(USER_NAME, USER_PASSWORD.toCharArray())).thenReturn(configKey)
+
+        user = User.loadUser(mockContext, USER_NAME, USER_PASSWORD)
+
+        Mockito.verify(keyStoreSpi).engineGetKey(USER_NAME, USER_PASSWORD.toCharArray())
+
+        loadSymKey()
 
         Assert.assertEquals("User name does not match expected!", USER_NAME, user!!.name)
-        Assert.assertEquals("User display name does not match expected!", USER_NAME.reversed(), decoder(user!!.filter))
+        Assert.assertEquals("User display name does not match expected!", USER_NAME, decryptedSym(user!!.filter))
         Assert.assertEquals("User url does not match expected!", USER_URL, user!!.url)
 
         // Note: Since we use Transformations to map the result of the DB query to the user's friends list, we have to look
@@ -86,21 +127,30 @@ class UserFacadeTest {
         val friends = SecureDatabase.instance?.accountDao()?.findSubscriptionKeys(user!!.filter)
 
         Assert.assertEquals("User should have themselves (only) in their friends list!", 1, friends?.value?.size)
-        Assert.assertEquals("User should be listed as the subscriber of the account!", USER_DISPLAY_NAME.reversed(), decoder(friends?.value?.get(0)?.subscriber!!))
-        Assert.assertEquals("User's URL should be listed as the subscription in the first friend!", USER_URL.reversed(), decoder(friends.value?.get(0)?.subscription!!))
+        Assert.assertEquals("User should be listed as the subscriber of the account!", USER_DISPLAY_NAME, decryptedSym(friends?.value?.get(0)?.subscriber!!))
+        Assert.assertEquals("User's URL should be listed as the subscription in the first friend!", USER_URL, decryptedSym(friends.value?.get(0)?.subscription!!))
     }
 
     @Test
-    fun testAddFriends() {
-        val keySpec = Mockito.mock(KeyGenParameterSpec::class.java)
-        val mockPair = KeyPair(publicKey, privateKey)
-        CliqueConfigTestHelper.createKeyPairSetup(keySpec, mockPair)
+    fun addFriends() {
+        User.createUser(mockContext, USER_NAME, USER_PASSWORD, USER_DISPLAY_NAME, USER_URL, userSym, userAsym)
 
-        User.createUser(mockContext, USER_NAME, USER_DISPLAY_NAME, USER_URL, mockUserSym, mockUserAsym)
-        user = User.loadUser(mockContext, USER_NAME)
+        Mockito.verify(keyStoreSpi).engineSetEntry(
+                Mockito.eq(USER_NAME),
+                Mockito.any(KeyStore.SecretKeyEntry::class.java),
+                Mockito.any(KeyStore.PasswordProtection::class.java)
+        )
+
+        Mockito.`when`(keyStoreSpi.engineGetKey(USER_NAME, USER_PASSWORD.toCharArray())).thenReturn(configKey)
+
+        user = User.loadUser(mockContext, USER_NAME, USER_PASSWORD)
+
+        Mockito.verify(keyStoreSpi).engineGetKey(USER_NAME, USER_PASSWORD.toCharArray())
+
+        loadSymKey()
 
         Assert.assertEquals("User name does not match expected!", USER_NAME, user!!.name)
-        Assert.assertEquals("User display name does not match expected!", USER_NAME.reversed(), decoder(user!!.filter))
+        Assert.assertEquals("User display name does not match expected!", USER_NAME, decryptedSym(user!!.filter))
         Assert.assertEquals("User url does not match expected!", USER_URL, user!!.url)
 
         // Note: Since we use Transformations to map the result of the DB query to the user's friends list, we have to look
@@ -109,34 +159,25 @@ class UserFacadeTest {
         val friends = SecureDatabase.instance?.accountDao()?.findSubscriptionKeys(user!!.filter)
 
         Assert.assertEquals("User should have themselves (only) in their friends list!", 1, friends?.value?.size)
-        Assert.assertEquals("User should be listed as the subscriber of the account!", USER_DISPLAY_NAME.reversed(), decoder(friends?.value?.get(0)?.subscriber!!))
-        Assert.assertEquals("User's URL should be listed as the subscription in the first friend!", USER_URL.reversed(), decoder(friends.value?.get(0)?.subscription!!))
+        Assert.assertEquals("User should be listed as the subscriber of the account!", USER_DISPLAY_NAME, decryptedSym(friends?.value?.get(0)?.subscriber!!))
+        Assert.assertEquals("User's URL should be listed as the subscription in the first friend!", USER_URL, decryptedSym(friends.value?.get(0)?.subscription!!))
 
         val rotations = SecureDatabase.instance?.accountDao()?.findRotationKeys(user!!.filter)
 
         Assert.assertEquals("User should have themselves (only) in their rotations list!", 1, rotations?.value?.size)
-        Assert.assertEquals("User should be listed as the subscriber of the account!", USER_DISPLAY_NAME.reversed(), decoder(rotations?.value?.get(0)?.subscriber!!))
+        Assert.assertEquals("User should be listed as the subscriber of the account!", USER_DISPLAY_NAME, decryptedSym(rotations?.value?.get(0)?.subscriber!!))
 
-        val key = CliqueConfig.createSecretKey(mockUserSym, TestCipherProviderSpi.provider)
+        val key = userSym.generateSecretKey("MockUserKey")
 
-        // The friends should have their information encrypted with the user's sym encryption.
-        val encrypt = fun (string: String) : String {
-            val cipher = Cipher.getInstance(mockUserSym.algorithm, TestCipherProviderSpi.provider)
-            cipher.init(Cipher.ENCRYPT_MODE, key)
-            return CliqueConfig.stringToEncodedString(string, cipher)
-        }
-
-        val encryptedDisplayName = encrypt.invoke(FRIEND_ONE_DISPLAY_NAME)
-        val encryptedUrl = encrypt.invoke(FRIEND_ONE_URL)
-        val encryptedKey = encrypt.invoke(FRIEND_ONE_READ_KEY)
+        val encryptedDisplayName = encryptedSym(FRIEND_ONE_DISPLAY_NAME)
+        val encryptedUrl = encryptedSym(FRIEND_ONE_URL)
+        val encryptedKey = encryptedSym(FRIEND_ONE_READ_KEY)
 
         val friendSubscription = CliqueSubscription(encryptedDisplayName, encryptedUrl, encryptedKey)
 
         // The friends should have their information encrypted with the user's sym encryption.
         Friend.fromSubscription(friendSubscription) {
-            val cipher = Cipher.getInstance(mockUserSym.algorithm, TestCipherProviderSpi.provider)
-            cipher.init(Cipher.DECRYPT_MODE, key)
-            cipher
+            userSymCipherProvider.cipher(it, symKey)
         }
 
         val friendAccount = CliqueAccount(
@@ -155,18 +196,27 @@ class UserFacadeTest {
 
         Assert.assertNotNull("User should now have a non-null friends list!", friends.value)
         Assert.assertEquals("User should have exactly two friends in their friends list!", 2, friends.value?.size?: -1)
-        Assert.assertEquals("User should be listed as the first subscriber of the account!", USER_DISPLAY_NAME.reversed(), decoder(friends.value?.get(0)?.subscriber!!))
-        Assert.assertEquals("User's URL should be listed as the subscription in the first friend!", USER_URL.reversed(), decoder(friends.value?.get(0)?.subscription!!))
-        Assert.assertEquals("User's friend's display name does not match expected!", FRIEND_ONE_DISPLAY_NAME.reversed(), decoder(friends.value?.get(1)?.subscriber!!))
-        Assert.assertEquals("User's friend's url does not match expected!", FRIEND_ONE_URL.reversed(), decoder(friends.value?.get(1)?.subscription!!))
-        Assert.assertEquals("User's friend's read key does not match expected!", FRIEND_ONE_READ_KEY.reversed(), decoder(friends.value?.get(1)?.feedReadKey!!))
+
+        var userIndex = if(decryptedSym(friends.value?.get(0)?.subscriber!!) == USER_DISPLAY_NAME) 0 else 1
+        var friendIndex = if(userIndex == 0) 1 else 0
+
+        Assert.assertEquals("User should be listed as the first subscriber of the account!", USER_DISPLAY_NAME, decryptedSym(friends.value?.get(userIndex)?.subscriber!!))
+        Assert.assertEquals("User's URL should be listed as the subscription in the first friend!", USER_URL, decryptedSym(friends.value?.get(userIndex)?.subscription!!))
+        Assert.assertEquals("User's friend's display name does not match expected!", FRIEND_ONE_DISPLAY_NAME, decryptedSym(friends.value?.get(friendIndex)?.subscriber!!))
+        Assert.assertEquals("User's friend's url does not match expected!", FRIEND_ONE_URL, decryptedSym(friends.value?.get(friendIndex)?.subscription!!))
+        Assert.assertEquals("User's friend's read key does not match expected!", FRIEND_ONE_READ_KEY, decryptedSym(friends.value?.get(friendIndex)?.feedReadKey!!))
+
+        userIndex = if(decryptedSym(rotations.value?.get(0)?.subscriber!!) == USER_DISPLAY_NAME) 0 else 1
+        friendIndex = if(userIndex == 0) 1 else 0
+
         Assert.assertEquals("User should have exactly two rotations in their rotations list!", 2, rotations.value?.size)
-        Assert.assertEquals("User should be listed as the first subscriber of the account!", USER_DISPLAY_NAME.reversed(), decoder(rotations.value?.get(0)?.subscriber!!))
-        Assert.assertEquals("User's friend should be listed as the second subscriber of the account!", FRIEND_ONE_DISPLAY_NAME.reversed(), decoder(rotations.value?.get(1)?.subscriber!!))
+        Assert.assertEquals("User should be listed as the first subscriber of the account!", USER_DISPLAY_NAME, decryptedSym(rotations.value?.get(userIndex)?.subscriber!!))
+        Assert.assertEquals("User's friend should be listed as the second subscriber of the account!", FRIEND_ONE_DISPLAY_NAME, decryptedSym(rotations.value?.get(friendIndex)?.subscriber!!))
     }
 
     companion object {
         const val USER_NAME = "MockUser"
+        const val USER_PASSWORD ="MockUserPassword"
         const val USER_DISPLAY_NAME = "Mock User"
         const val USER_URL = "https://MockStorage.net"
 

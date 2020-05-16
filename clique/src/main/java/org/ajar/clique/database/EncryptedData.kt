@@ -33,15 +33,25 @@ data class CliqueKey(
 
 /**
  * Represents a single user account, either for a subscribed user or the user of the account.
+ *
+ * User
+ * - Write Key: Asym Public - COLUMN_KEY_1
+ * - Read Key: Asym Private - COLUMN_KEY_2
+ * - Garbage Key: Asym Private - COLUMN_KEY_3
+ *
+ * Subscription
+ * - Rotate Write Key (Rotate Message to Subscriber): Asym Public - COLUMN_KEY_1
+ * - Read Key: Asym Private - COLUMN_KEY_2
+ * - Rotate Read Key (Rotate Message from Subscription): Asym Private - COLUMN_KEY_3
  */
 @Entity(tableName = CliqueAccount.TABLE_NAME)
 data class CliqueAccount(
         @PrimaryKey @ColumnInfo(name = COLUMN_USER) var user: String, // User/Subscription name, keychain encoded
         @ColumnInfo(name = COLUMN_DISPLAY_NAME) var displayName: String, // User/Subscription display Name, sym encoded
         @ColumnInfo(name = COLUMN_FILTER) var filter: String, // User Account Name, sym encoded
-        @ColumnInfo(name = COLUMN_PUBLIC_1) var publicOne: String, // CliqueKey name sym encoded
-        @ColumnInfo(name = COLUMN_PRIVATE_1) var privateOne: String, // CliqueKey name sym encoded
-        @ColumnInfo(name = COLUMN_PUBLIC_2) var publicTwo: String, // CliqueKey name sym encoded
+        @ColumnInfo(name = COLUMN_KEY_1) var key1: String, // CliqueKey name sym encoded
+        @ColumnInfo(name = COLUMN_KEY_2) var key2: String, // CliqueKey name sym encoded
+        @ColumnInfo(name = COLUMN_KEY_3) var key3: String, // CliqueKey name sym encoded
         @ColumnInfo(name = COLUMN_SYMMETRIC) var sym: String, // Symmetric Key, RSA encoded
         @ColumnInfo(name = COLUMN_SYMMETRIC_ALGO) var algo: String, // Symmetric Key, RSA encoded
         @ColumnInfo(name = COLUMN_URL) var url: String // URL, sym encoded
@@ -67,22 +77,22 @@ data class CliqueAccount(
         const val COLUMN_FILTER = "third" // Encrypted using the sym of a given User account
 
         /**
-         * In a User/Subscription this is the key to read this user's feed.
-         * This is the first part of a friend message that gets sent.
-         */
-        const val COLUMN_PUBLIC_1 = "fourth" // Encrypted using the sym of a given User account
-
-        /**
-         * In a User this is the key to write to this user's feed.
+         * In a User this is the key to publish this user's feed.
          * In a Subscription this is the key to send a rotation message to the specified subscriber (the second part of a friend message received)
          */
-        const val COLUMN_PRIVATE_1 = "fifth" // Encrypted using the sym of a given User account
+        const val COLUMN_KEY_1 = "fourth" // Encrypted using the sym of a given User account
+
+        /**
+         * In a User/Subscription this is the key to read to this user's feed.
+         * This is the first part of a friend message
+         */
+        const val COLUMN_KEY_2 = "fifth" // Encrypted using the sym of a given User account
 
         /**
          * In a User this is a made-up garbage key.
          * In a Subscription this is the key that decodes a rotation message from a given subscriber (the second part of a friend message that you keep)
          */
-        const val COLUMN_PUBLIC_2 = "sixth" // Encrypted using the sym of a given User account
+        const val COLUMN_KEY_3 = "sixth" // Encrypted using the sym of a given User account
 
         /**
          * In a User this is the symmetric key used to encode other keys.
@@ -113,10 +123,10 @@ data class CliqueSymmetricDescription (
 data class CliqueSubscription (
         @ColumnInfo(name = CliqueAccount.COLUMN_DISPLAY_NAME) var subscriber: String, // Subscriber account name sym encoded
         @ColumnInfo(name = CliqueAccount.COLUMN_URL) var subscription: String, // Subscription url, sym encoded
-        @ColumnInfo(name = CliqueAccount.COLUMN_PUBLIC_1) var feedReadKey: String // CliqueKey name sym encoded
+        @ColumnInfo(name = CliqueAccount.COLUMN_KEY_2) var feedReadKey: String // CliqueKey name sym encoded
 )
 
 data class CliqueRotateDescription (
         @ColumnInfo(name = CliqueAccount.COLUMN_DISPLAY_NAME) var subscriber: String, // Subscriber account name sym encoded
-        @ColumnInfo(name = CliqueAccount.COLUMN_PRIVATE_1) var rotateKey: String // CliqueKey name sym encoded
+        @ColumnInfo(name = CliqueAccount.COLUMN_KEY_2) var rotateKey: String // CliqueKey name sym encoded
 )

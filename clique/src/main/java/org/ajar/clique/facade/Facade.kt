@@ -5,25 +5,20 @@ import androidx.lifecycle.LiveData
 import androidx.lifecycle.Transformations
 import org.ajar.clique.CliqueConfig
 import org.ajar.clique.database.*
-import org.ajar.clique.encryption.AsymmetricEncryptionDescription
-import org.ajar.clique.encryption.SymmetricEncryptionDescription
+import org.ajar.clique.encryption.*
 import org.ajar.clique.transaction.SubscriptionExchange
+import java.security.KeyStore
 import javax.crypto.Cipher
-import javax.crypto.spec.SecretKeySpec
 
-private fun symDescToCipher(name: String, mode: Int, asymCipher: (Int) -> Cipher): Cipher? {
+private fun symDescToCipher(name: String, mode: Int, userConfigCipher: (Int) -> Cipher): Cipher? {
     return SecureDatabase.instance?.accountDao()?.findSymmetricDesc(name)?.let {
-        val symAlgoDesc =
-                SymmetricEncryptionDescription.fromString(
-                        CliqueConfig.encodedStringToString(it.symAlgo, asymCipher.invoke(Cipher.DECRYPT_MODE))
-                )
-
-        return CliqueConfig.initCipher(
-                symAlgoDesc,
+        val desc = SymmetricEncryptionDesc.fromString(
+                CliqueConfig.encodedStringToString(it.symAlgo, userConfigCipher.invoke(Cipher.DECRYPT_MODE))
+        )
+        CipherProvider.Symmetric(desc).cipher(
                 mode,
-                SecretKeySpec(
-                        CliqueConfig.encodedStringToByteArray(it.symKey, asymCipher.invoke(Cipher.DECRYPT_MODE)),
-                        symAlgoDesc.cipher
+                desc.secretKeyFromBytes(
+                        CliqueConfig.encodedStringToByteArray(it.symKey, userConfigCipher.invoke(Cipher.DECRYPT_MODE))
                 )
         )
     }
@@ -31,16 +26,12 @@ private fun symDescToCipher(name: String, mode: Int, asymCipher: (Int) -> Cipher
 
 private fun cliqueKeyToCipher(name: String, mode: Int, symCipher: (Int) -> Cipher?): Cipher? {
     return SecureDatabase.instance?.keyDao()?.findKey(name)?.let {
-        val keyAlgoDesc =
-                AsymmetricEncryptionDescription.fromString(
-                        CliqueConfig.encodedStringToString(it.cipher, symCipher.invoke(Cipher.DECRYPT_MODE)!!)
-                )
-
-        CliqueConfig.initCipher(
-                keyAlgoDesc,
+        val desc = AsymmetricEncryptionDesc.fromString(
+                CliqueConfig.encodedStringToString(it.cipher, symCipher.invoke(Cipher.DECRYPT_MODE)!!)
+        )
+        CipherProvider.Private(desc).cipher(
                 mode,
-                CliqueConfig.privateKeyFromBytes(
-                        keyAlgoDesc.algorithm,
+                desc.privateKeyFromBytes(
                         CliqueConfig.encodedStringToByteArray(it.key, symCipher.invoke(Cipher.DECRYPT_MODE)!!)
                 )
         )
@@ -71,7 +62,7 @@ class User private constructor(
         internal val invitationInfo: () -> CliqueSubscription?,
         internal val symCipher: (Int) -> Cipher?,
         private val feed: (value: String) -> String?,
-        private val androidKeyStoreAsymCipher: (Int) -> Cipher?,
+        private val androidKeyStoreUserCipher: (Int) -> Cipher?,
         private val symKeyTag: String
 ){
     fun writeFeedMessage(message: String): String? = feed(message)
@@ -96,15 +87,15 @@ class User private constructor(
             return CliqueConfig.stringToEncodedString("$friendName:$append", symCipher.invoke(Cipher.ENCRYPT_MODE)!!)
         }
 
-        val publicOneName = appendTo("publicOne")
-        val privateOneName = appendTo("privateOne")
-        val publicTwoName = appendTo("publicTwo")
+        val rotatePublishKey = appendTo("key1")
+        val feedReadKey = appendTo("key2")
+        val rotateReadKey = appendTo("key3")
 
-        SecureDatabase.instance?.keyDao()?.addKey(CliqueKey(publicOneName, friendInfo.readKey!!, friendInfo.readAlgo!!))
-        SecureDatabase.instance?.keyDao()?.addKey(CliqueKey(privateOneName, friendInfo.privateOne!!, friendInfo.privateOneAlgo!!))
-        SecureDatabase.instance?.keyDao()?.addKey(CliqueKey(publicTwoName, friendInfo.publicTwo!!, friendInfo.publicTwoAlgo!!))
+        SecureDatabase.instance?.keyDao()?.addKey(CliqueKey(rotatePublishKey, friendInfo.rotateWriteKey!!, friendInfo.rotateWriteAlgo!!))
+        SecureDatabase.instance?.keyDao()?.addKey(CliqueKey(feedReadKey, friendInfo.readKey!!, friendInfo.readAlgo!!))
+        SecureDatabase.instance?.keyDao()?.addKey(CliqueKey(rotateReadKey, friendInfo.rotateReadKey!!, friendInfo.rotateReadAlgo!!))
 
-        val dbName = CliqueConfig.stringToEncodedString(friendName, androidKeyStoreAsymCipher.invoke(Cipher.ENCRYPT_MODE)!!)
+        val dbName = CliqueConfig.stringToEncodedString(friendName, androidKeyStoreUserCipher.invoke(Cipher.ENCRYPT_MODE)!!)
 
         val symKey = SecureDatabase.instance?.accountDao()?.findSymmetricDesc(symKeyTag)
 
@@ -112,9 +103,9 @@ class User private constructor(
                 dbName,
                 friendInfo.name!!,
                 filter,
-                publicOneName,
-                privateOneName,
-                publicTwoName,
+                rotatePublishKey,
+                feedReadKey,
+                rotateReadKey,
                 symKey!!.symKey,
                 symKey.symAlgo,
                 friendInfo.url!!
@@ -122,17 +113,17 @@ class User private constructor(
     }
 
     companion object {
-        fun loadUser(context: Context, user: String): User? {
-            return CliqueConfig.getPrivateKeyFromKeyStore(user)?.let { userKey ->
-                val asymCipher = fun(mode: Int): Cipher { return CliqueConfig.initCipher(CliqueConfig.assymetricEncryption, mode, userKey) }
+        fun loadUser(context: Context, user: String, password: String): User? {
+            return CliqueConfig.getSecretKeyFromKeyStore(user, password)?.let { userKey ->
+                val configCipher = fun(mode: Int): Cipher { return CipherProvider.Symmetric(CliqueConfig.tableNameEncryption).cipher(mode, userKey) }
 
-                val encodedName = CliqueConfig.stringToEncodedString(user, asymCipher.invoke(Cipher.ENCRYPT_MODE))
+                val encodedName = CliqueConfig.stringToEncodedString(user, configCipher.invoke(Cipher.ENCRYPT_MODE))
 
                 if(SecureDatabase.instance == null) SecureDatabase.init(context, CliqueConfig.dbName) //TODO: Check the return. Deal with errors.
 
                 val encryptedSym = SecureDatabase.instance?.accountDao()?.findSymmetricDesc(encodedName)
                 encryptedSym?.let {
-                    val symCipher = fun(mode: Int): Cipher? { return symDescToCipher(encodedName, mode, asymCipher) }
+                    val symCipher = fun(mode: Int): Cipher? { return symDescToCipher(encodedName, mode, configCipher) }
 
                     val feedWriter = fun(value: String): String? { return writeFeedMessage(encodedName, value, symCipher) }
 
@@ -149,7 +140,7 @@ class User private constructor(
                             friendRequestInfo,
                             symCipher,
                             feedWriter,
-                            asymCipher,
+                            configCipher,
                             encodedName
                     )
                 }
@@ -159,18 +150,25 @@ class User private constructor(
         fun createUser(
                 context: Context,
                 user: String,
+                password: String,
                 displayName: String,
                 url: String,
-                symmetricDescription: SymmetricEncryptionDescription = SymmetricEncryptionDescription.default,
-                encryption: AsymmetricEncryptionDescription = AsymmetricEncryptionDescription.default
+                symmetricDescription: SymmetricEncryption = SymmetricEncryptionDesc.DEFAULT,
+                encryption: AsymmetricEncryption = AsymmetricEncryptionDesc.DEFAULT
         ) {
-            CliqueConfig.createSecuredKeyInKeyStore(user).private.also { userKey ->
-                val encryptUserKey = fun (): Cipher { return CliqueConfig.initCipher(CliqueConfig.assymetricEncryption, Cipher.ENCRYPT_MODE, userKey) }
+            // You could theoretically brute force the user name if you threw an exception here.
+            // In theory you could *still* brute force here, it's just dependent on how long it takes to
+            // set up an account.
+            if(CliqueConfig.getKeyStore()?.containsAlias(user) == true) return
+
+            CliqueConfig.tableNameEncryption.generateSecretKey(user).also { userKey ->
+                CliqueConfig.getKeyStore()?.setEntry(user, KeyStore.SecretKeyEntry(userKey), KeyStore.PasswordProtection(password.toCharArray()))
+                val encryptUserKey = fun (): Cipher { return CipherProvider.Symmetric(CliqueConfig.tableNameEncryption).cipher(Cipher.ENCRYPT_MODE, userKey) }
 
                 val encodedUser = CliqueConfig.stringToEncodedString(user, encryptUserKey.invoke())
 
-                val symKey = CliqueConfig.createSecretKey(symmetricDescription)
-                val encryptSymKey = fun (): Cipher { return CliqueConfig.initCipher(symmetricDescription, Cipher.ENCRYPT_MODE, symKey) }
+                val symKey = symmetricDescription.generateSecretKey()
+                val encryptSymKey = fun (): Cipher { return CipherProvider.Symmetric(symmetricDescription).cipher(Cipher.ENCRYPT_MODE, symKey) }
 
                 val encryptSym = CliqueConfig.byteArrayToEncodedString(symKey.encoded, encryptUserKey.invoke())
 
@@ -183,7 +181,7 @@ class User private constructor(
                 val encUrl = CliqueConfig.stringToEncodedString(url, encryptSymKey.invoke())
 
                 val encryptionOne = "$user:feed"
-                val encryptOnePair = CliqueConfig.createKeyPair(encryptionOne, encryption)
+                val encryptOnePair = encryption.generateKeyPair(encryptionOne)
 
                 val algoDescEncrypted = CliqueConfig.stringToEncodedString(encryption.toString(), encryptSymKey.invoke())
 
@@ -196,11 +194,11 @@ class User private constructor(
                 val feedPrivateKey = CliqueKey(feedPrivate, encryptOnePrivate, algoDescEncrypted)
 
                 val encryptionTwo = "$user:garbage"
-                val encryptTwoPair = CliqueConfig.createKeyPair(encryptionTwo, encryption)
+                val encryptTwoPair = encryption.generateKeyPair(encryptionTwo)
 
-                val encryptTwoPublic = CliqueConfig.byteArrayToEncodedString(encryptTwoPair.public.encoded, encryptSymKey.invoke())
-                val garbage = CliqueConfig.stringToEncodedString("$encryptionTwo(public)", encryptSymKey.invoke())
-                val garbagePublicKey = CliqueKey(garbage, encryptTwoPublic, algoDescEncrypted)
+                val encryptTwoPrivate = CliqueConfig.byteArrayToEncodedString(encryptTwoPair.private.encoded, encryptSymKey.invoke())
+                val garbage = CliqueConfig.stringToEncodedString("$encryptionTwo(private)", encryptSymKey.invoke())
+                val garbagePrivateKey = CliqueKey(garbage, encryptTwoPrivate, algoDescEncrypted)
 
                 if(SecureDatabase.instance == null) SecureDatabase.init(context, CliqueConfig.dbName)
 
@@ -209,7 +207,7 @@ class User private constructor(
 
                 SecureDatabase.instance!!.keyDao().addKey(feedPublicKey)
                 SecureDatabase.instance!!.keyDao().addKey(feedPrivateKey)
-                SecureDatabase.instance!!.keyDao().addKey(garbagePublicKey)
+                SecureDatabase.instance!!.keyDao().addKey(garbagePrivateKey)
             }
         }
     }
