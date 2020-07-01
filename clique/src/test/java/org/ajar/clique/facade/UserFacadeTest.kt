@@ -1,13 +1,15 @@
-package org.ajar.clique
+package org.ajar.clique.facade
 
 import android.content.Context
+import org.ajar.clique.CliqueConfig
+import org.ajar.clique.CliqueConfigTest
+import org.ajar.clique.CliqueTestHelper
+import org.ajar.clique.SymetricEncryptionWrapper
 import org.ajar.clique.database.CliqueAccount
 import org.ajar.clique.database.CliqueSubscription
 import org.ajar.clique.database.SecureDAOTestHelper
 import org.ajar.clique.database.SecureDatabase
 import org.ajar.clique.encryption.*
-import org.ajar.clique.facade.Friend
-import org.ajar.clique.facade.User
 import org.junit.After
 import org.junit.Assert
 import org.junit.Before

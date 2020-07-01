@@ -231,8 +231,8 @@ class Friend private constructor(val displayName: String, val url: String, priva
 
     companion object {
         /**
-         * @param subscription user symmetric encrypted subscription information for the friend
-         * @param symDecrypt function that generates a decryption cipher for the encryption used to encrypt the subscription.
+         * @param subscription user symmetric encrypted subscription information for the friend.
+         * @param symDecrypt function that generates a decryption cipher for the exchange encryption used to encrypt the Subscription.
          */
         internal fun fromSubscription(subscription: CliqueSubscription, symCipher: (Int) -> Cipher?): Friend {
             // To create this friend we need to get the display name, url, and read key and turn them

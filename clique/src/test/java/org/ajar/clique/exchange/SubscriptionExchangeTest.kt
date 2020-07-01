@@ -6,13 +6,13 @@ import org.ajar.clique.database.SecureDAOTestHelper
 import org.ajar.clique.database.SecureDatabase
 import org.ajar.clique.encryption.*
 import org.ajar.clique.facade.User
+import org.ajar.clique.facade.UserFacadeTest
 import org.ajar.clique.transaction.Invitation
 import org.ajar.clique.transaction.SubscriptionExchange
 import org.junit.*
 import org.mockito.Mockito
 import java.lang.NullPointerException
 import java.security.*
-import javax.crypto.BadPaddingException
 import javax.crypto.Cipher
 import javax.crypto.SecretKey
 
@@ -562,14 +562,9 @@ class SubscriptionExchangeTest {
         const val USER_URL = UserFacadeTest.USER_URL
         const val USER_PASSWORD = UserFacadeTest.USER_PASSWORD
         const val USER_DISPLAY_NAME = UserFacadeTest.USER_DISPLAY_NAME
-        const val USER_READ_KEY = "UserPublicReadKey"
-        const val USER_ROTATE_READ_KEY = "UserRotateReadKey"
-        const val USER_ROTATE_WRITE_KEY = "UserRotateReadKey"
 
         const val FRIEND_ONE_NAME = "FriendOneName"
-        const val FRIEND_ONE_READ_KEY = UserFacadeTest.FRIEND_ONE_READ_KEY
         const val FRIEND_ONE_DISPLAY_NAME = UserFacadeTest.FRIEND_ONE_DISPLAY_NAME
-        const val FRIEND_ONE_ROTATE_KEY = "FriendOneRotateKey"
         const val FRIEND_ONE_URL = UserFacadeTest.FRIEND_ONE_URL
     }
 }
