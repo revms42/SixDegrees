@@ -70,25 +70,15 @@ class MockMutableLiveData<T> : MutableLiveData<T>() {
 class CliqueAccountDAOMock : SecureDaoTestMock(), CliqueAccountDAO {
 
     private val filterSubscriptionMap = HashMap<String, MutableLiveData<List<CliqueSubscription>?>>()
-    private val filterRotationMap = HashMap<String, MutableLiveData<List<CliqueRotateDescription>?>>()
 
     private fun postSubscriptionChange(filter: String) {
-        filterSubscriptionMap[filter]?.postValue(filterAccounts(filter)?.map {account -> CliqueSubscription(account.displayName, account.url, account.key1) }?.toList())
-    }
-
-    private fun postRotationChange(filter: String) {
-        filterRotationMap[filter]?.postValue(filterAccounts(filter)?.map { account -> CliqueRotateDescription(account.displayName, account.key2) }?.toList())
-    }
-
-    private fun postBothChanges(filter: String) {
-        postSubscriptionChange(filter)
-        postRotationChange(filter)
+        // Previous to the shared key change, "feedReadKey" was "key1" and there was no key2
+        filterSubscriptionMap[filter]?.postValue(filterAccounts(filter)?.map {account -> CliqueSubscription(account.displayName, account.url, account.key2, account.key1) }?.toList())
     }
 
     override fun clear() {
         super.clear()
         filterSubscriptionMap.clear()
-        filterRotationMap.clear()
     }
 
     override fun findAccount(user: String): CliqueAccount? {
@@ -104,7 +94,7 @@ class CliqueAccountDAOMock : SecureDaoTestMock(), CliqueAccountDAO {
     }
 
     override fun findFriendRequestInfo(user: String): CliqueSubscription? {
-        return findAccount(user)?.let { CliqueSubscription(it.displayName, it.url, it.key2) }
+        return findAccount(user)?.let { CliqueSubscription(it.displayName, it.url, it.key2, it.key1) }
     }
 
     override fun findPublishUrlForUser(user: String): String? {
@@ -115,11 +105,17 @@ class CliqueAccountDAOMock : SecureDaoTestMock(), CliqueAccountDAO {
         return findAccount(user)?.filter
     }
 
+    override fun findAccountByDisplayName(displayName: String): CliqueAccount? {
+        return values(CliqueAccount::class.java)?.firstOrNull {
+            it.displayName == displayName
+        }
+    }
+
     private fun filterAccounts(filter: String): List<CliqueAccount>? {
         return values(CliqueAccount::class.java)?.filter { account -> account.filter == filter }
     }
 
-    override fun findSubscriptionKeys(filter: String): LiveData<List<CliqueSubscription>?> {
+    override fun observeSubscriptionKeys(filter: String): LiveData<List<CliqueSubscription>?> {
         if(!filterSubscriptionMap.containsKey(filter)) {
             filterSubscriptionMap[filter] = MockMutableLiveData()
         }
@@ -129,21 +125,15 @@ class CliqueAccountDAOMock : SecureDaoTestMock(), CliqueAccountDAO {
         }
     }
 
-    override fun findRotationKeys(filter: String): LiveData<List<CliqueRotateDescription>?> {
-        if(!filterRotationMap.containsKey(filter)) {
-            filterRotationMap[filter] = MockMutableLiveData()
-        }
-
-        return filterRotationMap[filter]!!.also {
-            postRotationChange(filter)
-        }
+    override fun findSubscriptionKeys(filter: String): List<CliqueSubscription>? {
+        return filterSubscriptionMap[filter]!!.value
     }
 
     override fun addAccount(account: CliqueAccount) {
         addObject(account.user, account)
 
         if(filterSubscriptionMap.containsKey(account.filter)) {
-            postBothChanges(account.filter)
+            postSubscriptionChange(account.filter)
         }
     }
 
@@ -152,7 +142,7 @@ class CliqueAccountDAOMock : SecureDaoTestMock(), CliqueAccountDAO {
             addAccount(it)
 
             if(filterSubscriptionMap.containsKey(it.filter)) {
-                postBothChanges(it.filter)
+                postSubscriptionChange(it.filter)
             }
         }
     }
@@ -162,7 +152,7 @@ class CliqueAccountDAOMock : SecureDaoTestMock(), CliqueAccountDAO {
             removeObject(it.user)
 
             if(filterSubscriptionMap.containsKey(it.filter)) {
-                postBothChanges(it.filter)
+                postSubscriptionChange(it.filter)
             }
         }
     }

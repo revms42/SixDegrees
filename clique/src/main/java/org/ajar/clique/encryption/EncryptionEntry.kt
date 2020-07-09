@@ -4,7 +4,6 @@ import android.security.keystore.KeyProperties
 import org.conscrypt.Conscrypt
 import java.lang.Exception
 import java.security.KeyPairGenerator
-import java.security.Provider
 import java.security.Security
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
@@ -38,6 +37,11 @@ class AlgorithmDesc private constructor(val name: String) {
         val readableAlgorithms : Collection<AlgorithmDesc>
             get() = loaded.filter { desc ->
                 desc.ciphers.isNotEmpty() and desc.factories.isNotEmpty()
+            }
+        // A list of algorithms that don't have ciphers but can read and write keys.
+        val keyExchangeAlgorithms : Collection<AlgorithmDesc>
+            get() = loaded.filter { desc ->
+                desc.keyPairGenerators.isNotEmpty() and desc.factories.isNotEmpty()
             }
 
         fun toAlgorithm(name: String) : AlgorithmDesc {
@@ -118,8 +122,6 @@ class AlgorithmDesc private constructor(val name: String) {
                                         keySizes.add(it)
                                     } catch (_: Exception) {}
                                 }
-                            } else {
-                                println("${desc.name}: $keySizes")
                             }
                             desc.keyGenerators.add(GeneratorDesc(providerDesc, keySizes))
                         }
@@ -150,6 +152,18 @@ class AlgorithmDesc private constructor(val name: String) {
                         }
                         "KeyStore" -> {
                             KeyStoreDesc.toKeyStore(service.algorithm, providerDesc)
+                        }
+                        "KeyAgreement" -> {
+                            KeyAgreementDesc.toKeyAgreement(service.algorithm, providerDesc)
+                        }
+                        "AlgorithmParameters" -> {
+                            if(service.algorithm == "EC") {
+                                service.getAttribute("SupportedCurves").split("|").forEach { curveDesc ->
+                                    curveDesc.replace("[\\[\\]]","").split(",").forEach { curve ->
+                                        GeneratorParameterDesc.toParameterDesc(curve, providerDesc)
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -279,5 +293,42 @@ data class KeyStoreDesc private constructor(val name: String, val provider: Prov
         }
 
         fun findKeyStore(name: String) : KeyStoreDesc? = _all[name]
+    }
+}
+
+@Suppress("DataClassPrivateConstructor")
+data class KeyAgreementDesc private constructor(val name: String, val provider: ProviderDesc) {
+    companion object {
+        private val _all = HashMap<String, KeyAgreementDesc>()
+
+        val all: Map<String, KeyAgreementDesc> = _all
+
+        fun toKeyAgreement(name: String, provider: ProviderDesc) : KeyAgreementDesc {
+            if(!_all.contains(name)) {
+                _all[name] = KeyAgreementDesc(name, provider)
+            }
+            return _all[name]!!
+        }
+
+        fun findKeyAgreement(name: String): KeyAgreementDesc? = _all[name]
+    }
+}
+
+@Suppress("DataClassPrivateConstructor")
+data class GeneratorParameterDesc private constructor(val name: String, val provider: ProviderDesc) {
+
+    companion object {
+        private val _all = HashMap<String, GeneratorParameterDesc>()
+
+        val all: Map<String, GeneratorParameterDesc> = _all
+
+        fun toParameterDesc(name: String, provider: ProviderDesc) : GeneratorParameterDesc {
+            if(!_all.contains(name)) {
+                _all[name] = GeneratorParameterDesc(name, provider)
+            }
+            return _all[name]!!
+        }
+
+        fun findParameterDesc(name: String) : GeneratorParameterDesc? = _all[name]
     }
 }

@@ -165,7 +165,7 @@ class SubscriptionExchangeTest {
         }
 
         val originalEncryption = CliqueConfig.tableNameEncryption
-        val wrappedEncryption = SymetricEncryptionWrapper(originalEncryption, captureKey)
+        val wrappedEncryption = SymmetricEncryptionWrapper(originalEncryption, captureKey)
         CliqueConfig.tableNameEncryption = wrappedEncryption
 
 
@@ -234,23 +234,27 @@ class SubscriptionExchangeTest {
         val captureRotationKeyPair = fun(keyPair: KeyPair) {
             capturedRotateWriteKey = CliqueConfig.byteArrayToEncodedString(keyPair.private.encoded, exchangeCipher.invoke(Cipher.ENCRYPT_MODE))
         }
-        val rotCipherDesc = AsymetricEncryptionWrapper(AsymmetricEncryptionDesc.DEFAULT, captureRotationKeyPair)
-        val invitation = exchange.createInvitation(FRIEND_ONE_DISPLAY_NAME, rotCipherDesc)
+
+        val sharedSecretExchange = SharedSecretBuilder.create().build(SymmetricEncryptionDesc.DEFAULT)
+        val secretExchangeWrapper = SharedSecretExchangeWrapper(sharedSecretExchange!!, captureRotationKeyPair)
+
+        val invitation = exchange.createInvitation(FRIEND_ONE_DISPLAY_NAME, secretExchangeWrapper)
 
         Assert.assertNotNull("Invitation should not be null!", invitation)
         Assert.assertEquals("Invitation URL does not match expected!", USER_URL, decoder(invitation!!.url))
         Assert.assertEquals("Invitation read key does not match expected!", userReadKey, decoder(invitation.readKey))
         Assert.assertEquals("Invitation read key algo does not match expected!", userAsym.toString(), decoder(invitation.readAlgo))
         Assert.assertEquals("Invitation rotate key does not match expected!", capturedRotateWriteKey, invitation.rotateKey)
-        Assert.assertEquals("Invitation rotate key algo does not match expected!", rotCipherDesc.toString(), decoder(invitation.rotateAlgo))
+        Assert.assertEquals("Invitation rotate key algo does not match expected!", sharedSecretExchange.toString(), decoder(invitation.agreement))
     }
 
     @Test
     fun testExchangeSubscriptionRespond() {
-        val rotCipherDesc = AsymmetricEncryptionDesc.DEFAULT
         val invitation = Mockito.mock(Invitation::class.java)
 
-        val keyPair = rotCipherDesc.generateKeyPair(FRIEND_ONE_NAME)
+        val agreement = SharedSecretBuilder.create().build(SymmetricEncryptionDesc.DEFAULT)
+
+        val keyPair = agreement!!.generateKeyPair()
         val rotateKey = CliqueConfig.byteArrayToEncodedString(keyPair.private.encoded, exchangeCipher.invoke(Cipher.ENCRYPT_MODE))
 
         Mockito.`when`(invitation.readAlgo).thenReturn(CliqueConfig.stringToEncodedString(userAsym.toString(), exchangeCipher.invoke(Cipher.ENCRYPT_MODE)))
@@ -260,7 +264,7 @@ class SubscriptionExchangeTest {
                     exchangeCipher.invoke(Cipher.ENCRYPT_MODE)
             )
         )
-        Mockito.`when`(invitation.rotateAlgo).thenReturn(CliqueConfig.stringToEncodedString(rotCipherDesc.toString(), exchangeCipher.invoke(Cipher.ENCRYPT_MODE)))
+        Mockito.`when`(invitation.agreement).thenReturn(CliqueConfig.stringToEncodedString(agreement.toString(), exchangeCipher.invoke(Cipher.ENCRYPT_MODE)))
         Mockito.`when`(invitation.rotateKey).thenReturn(rotateKey)
         Mockito.`when`(invitation.url).thenReturn(CliqueConfig.stringToEncodedString(FRIEND_ONE_URL, exchangeCipher.invoke(Cipher.ENCRYPT_MODE)))
 
@@ -269,16 +273,13 @@ class SubscriptionExchangeTest {
         val userDecrypter = fun(string: String) : String =
                 CliqueConfig.encodedStringToString(string, userSymKeyCipherProvider.cipher(Cipher.DECRYPT_MODE, userSymKey))
 
-        Assert.assertEquals("Friend read algorithm does not match!", userAsym.toString(), userDecrypter(exchange.friendInfo.readAlgo!!))
+        Assert.assertEquals("Friend read algorithm does not match!", userAsym.toString(), userDecrypter(exchange.friendInfo.friendReadAlgo!!))
         Assert.assertEquals("Friend read key does not match!",
                 friendReadKey,
-                userDecrypter(exchange.friendInfo.readKey!!)
+                userDecrypter(exchange.friendInfo.friendReadKey!!)
         )
-        Assert.assertEquals("Friend rotate algorithm does not match!", rotCipherDesc.toString(), userDecrypter(exchange.friendInfo.rotateReadAlgo!!))
-        Assert.assertEquals("Friend rotate key does not match!",
-                CliqueConfig.encodedStringToString(rotateKey, exchangeCipher.invoke(Cipher.DECRYPT_MODE)),
-                userDecrypter(exchange.friendInfo.rotateReadKey!!)
-        )
+        Assert.assertEquals("Friend rotate agreement does not match!", agreement, exchange.friendInfo.agreement!!)
+        Assert.assertEquals("Friend rotate key does not match!", keyPair.private, exchange.friendInfo.friendRotateKey!!)
         Assert.assertEquals("Friend publish url does not match!", FRIEND_ONE_URL, userDecrypter(exchange.friendInfo.url!!))
     }
 
@@ -288,29 +289,31 @@ class SubscriptionExchangeTest {
     @Test
     fun testCreateFriendFromResponse() {
         // First, do what we did above to create a friend request (invitation)
-        var capturedRotatePublishKey: String? = null
-        var capturedRotateReadKey: String? = null
+        var capturedRotateWriteKey: String? = null
         val captureRotationKeyPair = fun(keyPair: KeyPair) {
-            capturedRotateReadKey = CliqueConfig.byteArrayToEncodedString(keyPair.private.encoded, exchangeCipher.invoke(Cipher.ENCRYPT_MODE))
-            capturedRotatePublishKey = CliqueConfig.byteArrayToEncodedString(keyPair.public.encoded, userSymKeyCipherProvider.cipher(Cipher.ENCRYPT_MODE, userSymKey))
+            capturedRotateWriteKey = CliqueConfig.byteArrayToEncodedString(keyPair.private.encoded, exchangeCipher.invoke(Cipher.ENCRYPT_MODE))
         }
-        var rotCipherDesc: AsymmetricEncryption = AsymetricEncryptionWrapper(AsymmetricEncryptionDesc.DEFAULT, captureRotationKeyPair)
-        val invitation = exchange.createInvitation(FRIEND_ONE_DISPLAY_NAME, rotCipherDesc)
+
+        val sharedSecretExchange = SharedSecretBuilder.create().build(CliqueTestHelper.getOnlySupportedECDHAlgo())
+        val secretExchangeWrapper = SharedSecretExchangeWrapper(sharedSecretExchange!!, captureRotationKeyPair)
+
+        val invitation = exchange.createInvitation(FRIEND_ONE_DISPLAY_NAME, secretExchangeWrapper)
 
         Assert.assertNotNull("Invitation should not be null!", invitation)
         Assert.assertEquals("Invitation URL does not match expected!", USER_URL, decoder(invitation!!.url))
         Assert.assertEquals("Invitation read key does not match expected!", userReadKey, decoder(invitation.readKey))
         Assert.assertEquals("Invitation read key algo does not match expected!", userAsym.toString(), decoder(invitation.readAlgo))
-        Assert.assertEquals("Invitation rotate key does not match expected!", capturedRotateReadKey, invitation.rotateKey)
-        Assert.assertEquals("Invitation rotate key algo does not match expected!", rotCipherDesc.toString(), decoder(invitation.rotateAlgo))
-
+        Assert.assertEquals("Invitation rotate key does not match expected!", capturedRotateWriteKey, invitation.rotateKey)
+        Assert.assertEquals("Invitation rotate key algo does not match expected!", secretExchangeWrapper.toString(), decoder(invitation.agreement))
 
         // Second, do what we did above to create a mock response to the invitation (response)
         val response = Mockito.mock(Invitation::class.java)
 
-        rotCipherDesc = AsymmetricEncryptionDesc.DEFAULT
+        val restoredSecretExchange = SharedSecretExchangeDesc.fromString(decoder(invitation.agreement))
 
-        val keyPair = rotCipherDesc.generateKeyPair(FRIEND_ONE_NAME)
+        Assert.assertEquals("Shared Secret Exchange does not match the one sent to the invitation", sharedSecretExchange, restoredSecretExchange)
+
+        val keyPair = restoredSecretExchange.generateKeyPair()
         val rotateKey = CliqueConfig.byteArrayToEncodedString(keyPair.private.encoded, exchangeCipher.invoke(Cipher.ENCRYPT_MODE))
 
         Mockito.`when`(response.readAlgo).thenReturn(CliqueConfig.stringToEncodedString(userAsym.toString(), exchangeCipher.invoke(Cipher.ENCRYPT_MODE)))
@@ -320,7 +323,7 @@ class SubscriptionExchangeTest {
                         exchangeCipher.invoke(Cipher.ENCRYPT_MODE)
                 )
         )
-        Mockito.`when`(response.rotateAlgo).thenReturn(CliqueConfig.stringToEncodedString(rotCipherDesc.toString(), exchangeCipher.invoke(Cipher.ENCRYPT_MODE)))
+        Mockito.`when`(response.agreement).thenReturn(CliqueConfig.stringToEncodedString(invitation.agreement, exchangeCipher.invoke(Cipher.ENCRYPT_MODE)))
         Mockito.`when`(response.rotateKey).thenReturn(rotateKey)
         Mockito.`when`(response.url).thenReturn(CliqueConfig.stringToEncodedString(FRIEND_ONE_URL, exchangeCipher.invoke(Cipher.ENCRYPT_MODE)))
 
@@ -331,21 +334,156 @@ class SubscriptionExchangeTest {
         val userDecrypter = fun(string: String) : String =
                 CliqueConfig.encodedStringToString(string, userSymKeyCipherProvider.cipher(Cipher.DECRYPT_MODE, userSymKey))
 
-        Assert.assertEquals("Friend read algorithm does not match!", userAsym.toString(), userDecrypter(exchange.friendInfo.readAlgo!!))
+        Assert.assertEquals("Friend read algorithm does not match!", userAsym.toString(), userDecrypter(exchange.friendInfo.friendReadAlgo!!))
         Assert.assertEquals("Friend read key does not match!",
                 friendReadKey,
-                userDecrypter(exchange.friendInfo.readKey!!)
+                userDecrypter(exchange.friendInfo.friendReadKey!!)
         )
-        Assert.assertEquals("Friend rotate algorithm does not match!", rotCipherDesc.toString(), userDecrypter(exchange.friendInfo.rotateReadAlgo!!))
-        Assert.assertEquals("Friend rotate key does not match!",
-                CliqueConfig.encodedStringToString(rotateKey, exchangeCipher.invoke(Cipher.DECRYPT_MODE)),
-                userDecrypter(exchange.friendInfo.rotateReadKey!!)
-        )
+        Assert.assertEquals("Friend rotate algorithm does not match!", secretExchangeWrapper, exchange.friendInfo.agreement)
+        val encodedRotateKey = CliqueConfig.byteArrayToEncodedString(exchange.friendInfo.friendRotateKey!!.encoded, exchangeCipher.invoke(Cipher.ENCRYPT_MODE))
+        Assert.assertEquals("Friend rotate key does not match!", rotateKey, encodedRotateKey)
         Assert.assertEquals("Friend publish url does not match!", FRIEND_ONE_URL, userDecrypter(exchange.friendInfo.url!!))
 
         // Load up the existing friends list to have something to compare to.
-        val preFriendList = SecureDatabase.instance?.accountDao()?.findSubscriptionKeys(user!!.filter)
+        val preFriendList = SecureDatabase.instance?.accountDao()?.observeSubscriptionKeys(user!!.filter)
         Assert.assertEquals("Unexpected number of friends in friends list!",1, preFriendList?.value?.size)
+
+        val userConfigCipher = fun(mode: Int): Cipher {
+            return configCipherPublicProvider.cipher(mode, userConfigKey!!)
+        }
+
+        var capturedRotatePublishKey: ByteArray? = null
+        val captureRotatePublishKey = fun(key: SecretKey) {
+            capturedRotatePublishKey = key.encoded
+        }
+        exchange.friendInfo.agreement = SharedSecretExchangeWrapper(exchange.friendInfo.agreement!!, captureSecretKey = captureRotatePublishKey)
+
+        // Finalize that exchange to add the new friend to the user's account.
+        exchange.finalizeExchange()
+
+        // Grab all the information that you'll need to verify that a friend account has been set up.
+        val friendAccountName = CliqueConfig.stringToEncodedString(FRIEND_ONE_DISPLAY_NAME, userConfigCipher.invoke(Cipher.ENCRYPT_MODE))
+        val friendAccount = SecureDatabase.instance?.accountDao()?.findAccount(friendAccountName)
+        val userAccountName = CliqueConfig.stringToEncodedString(user!!.name, userConfigCipher.invoke(Cipher.ENCRYPT_MODE))
+        val userAccount = SecureDatabase.instance?.accountDao()?.findAccount(userAccountName)
+                ?: throw NullPointerException("Could not find user account!")
+
+        val userConfigDecode = fun(string: String) : String {
+            return CliqueConfig.encodedStringToString(string, userConfigCipher.invoke(Cipher.DECRYPT_MODE))
+        }
+
+        val userSymmetricDecode = fun(string: String) : String {
+            return CliqueConfig.encodedStringToString(string, userSymKeyCipherProvider.cipher(Cipher.DECRYPT_MODE, userSymKey))
+        }
+
+        // Verify that the friend is there and has the right information.
+        Assert.assertNotNull("A friend account should be present!", friendAccount)
+        Assert.assertEquals("Friend's display name does not match expected!", FRIEND_ONE_DISPLAY_NAME, userSymmetricDecode(friendAccount!!.displayName))
+        Assert.assertEquals("Friend's filter is not the user's filter!", userAccount.filter, friendAccount.filter)
+        Assert.assertEquals("Friend's symmetric key is not the users' symmetric key!", userAccount.sym, friendAccount.sym)
+        Assert.assertEquals("Friend's symmetric algorithm is not the users' symmetric algorithm!", userAccount.algo, friendAccount.algo)
+        Assert.assertEquals("Friend's publish url is not the expected url!", FRIEND_ONE_URL, userSymmetricDecode(friendAccount.url))
+
+        // Check to see that the keys and algo descriptions are there as well.
+        val subscriptionRotatePublish = SecureDatabase.instance?.keyDao()?.findKey(friendAccount.key1)
+        val subscriptionRead = SecureDatabase.instance?.keyDao()?.findKey(friendAccount.key2)
+
+        // Key 1: Subscription rotation notification publish key (the key used to notify a subscriber that you're rotating
+        Assert.assertEquals("Friend's rotate notification publish key algorithm does not match the expected algorithm!",
+                sharedSecretExchange.secretAlgo.toString(),
+                userSymmetricDecode(subscriptionRotatePublish!!.cipher)
+        )
+
+        Assert.assertArrayEquals("Friend's rotate notification publish key data does not match the expected key data!",
+                capturedRotatePublishKey!!,
+                CliqueConfig.encodedStringToByteArray(subscriptionRotatePublish.key, userSymKeyCipherProvider.cipher(Cipher.DECRYPT_MODE, userSymKey))
+        )
+
+        // Key 2: Subscription Read Key (the key used to read a subscriber's feed)
+        Assert.assertEquals("Friend's subscription read key algorithm does not match the expected algorithm!",
+                userAsym.toString(),
+                userSymmetricDecode(subscriptionRead!!.cipher)
+        )
+        Assert.assertEquals("Friend's subscription read key data does not match the expected key data!",
+                friendReadKey,
+                userSymmetricDecode(subscriptionRead.key)
+        )
+
+        // Finally, check to see that the list of friends matches what is expected.
+        Assert.assertEquals("Unexpected number of friends in friends list!",2, preFriendList?.value?.size)
+        Assert.assertNotNull("Could not find the added friend!", preFriendList?.value?.firstOrNull { friend ->
+            userSymmetricDecode(friend.subscriber) ==  FRIEND_ONE_DISPLAY_NAME
+        })
+    }
+
+    /**
+     * You're responding to a request, then creating a friend after you send a response.
+     */
+    @Test
+    fun testCreateFriendFromRequest() {
+        // First, do what we did above to create a mock response to the invitation (request)
+        val invitation = Mockito.mock(Invitation::class.java)
+
+        val sharedSecretExchange = SharedSecretBuilder.create().build(CliqueTestHelper.getOnlySupportedECDHAlgo())
+
+        val keyPair = sharedSecretExchange!!.generateKeyPair()
+        val rotateKey = CliqueConfig.byteArrayToEncodedString(keyPair.private.encoded, exchangeCipher.invoke(Cipher.ENCRYPT_MODE))
+
+        Mockito.`when`(invitation.readAlgo).thenReturn(CliqueConfig.stringToEncodedString(userAsym.toString(), exchangeCipher.invoke(Cipher.ENCRYPT_MODE)))
+        Mockito.`when`(invitation.readKey).thenReturn(
+                CliqueConfig.stringToEncodedString(
+                        friendReadKey,
+                        exchangeCipher.invoke(Cipher.ENCRYPT_MODE)
+                )
+        )
+        Mockito.`when`(invitation.agreement).thenReturn(CliqueConfig.stringToEncodedString(sharedSecretExchange.toString(), exchangeCipher.invoke(Cipher.ENCRYPT_MODE)))
+        Mockito.`when`(invitation.rotateKey).thenReturn(rotateKey)
+        Mockito.`when`(invitation.url).thenReturn(CliqueConfig.stringToEncodedString(FRIEND_ONE_URL, exchangeCipher.invoke(Cipher.ENCRYPT_MODE)))
+
+        // Read the response, putting the data into the exchange.
+        exchange.readInvitation(invitation)
+
+        // Assert that the data matches what you expect.
+        val userDecrypter = fun(string: String) : String =
+                CliqueConfig.encodedStringToString(string, userSymKeyCipherProvider.cipher(Cipher.DECRYPT_MODE, userSymKey))
+
+        Assert.assertEquals("Friend read algorithm does not match!", userAsym.toString(), userDecrypter(exchange.friendInfo.friendReadAlgo!!))
+        Assert.assertEquals("Friend read key does not match!",
+                friendReadKey,
+                userDecrypter(exchange.friendInfo.friendReadKey!!)
+        )
+        Assert.assertEquals("Friend rotate algorithm does not match!", sharedSecretExchange, exchange.friendInfo.agreement)
+        val encodedRotateKey = CliqueConfig.byteArrayToEncodedString(exchange.friendInfo.friendRotateKey!!.encoded, exchangeCipher.invoke(Cipher.ENCRYPT_MODE))
+        Assert.assertEquals("Friend rotate key does not match!", rotateKey, encodedRotateKey)
+        Assert.assertEquals("Friend publish url does not match!", FRIEND_ONE_URL, userDecrypter(exchange.friendInfo.url!!))
+
+        // Second, do what we did above to create a friend request (invitation)
+        var capturedRotateWriteKey: String? = null
+        val captureRotationKeyPair = fun(keyPair: KeyPair) {
+            capturedRotateWriteKey = CliqueConfig.byteArrayToEncodedString(keyPair.private.encoded, exchangeCipher.invoke(Cipher.ENCRYPT_MODE))
+        }
+
+        val restoredSecretExchange = SharedSecretExchangeDesc.fromString(decoder(invitation.agreement))
+        val secretExchangeWrapper = SharedSecretExchangeWrapper(restoredSecretExchange, captureRotationKeyPair)
+
+        val response = exchange.createInvitation(FRIEND_ONE_DISPLAY_NAME, secretExchangeWrapper)
+
+        Assert.assertNotNull("Invitation should not be null!", response)
+        Assert.assertEquals("Invitation URL does not match expected!", USER_URL, decoder(response!!.url))
+        Assert.assertEquals("Invitation read key does not match expected!", userReadKey, decoder(response.readKey))
+        Assert.assertEquals("Invitation read key algo does not match expected!", userAsym.toString(), decoder(response.readAlgo))
+        Assert.assertEquals("Invitation rotate key does not match expected!", capturedRotateWriteKey, response.rotateKey)
+        Assert.assertEquals("Invitation rotate key algo does not match expected!", secretExchangeWrapper.toString(), decoder(response.agreement))
+
+        // Load up the existing friends list to have something to compare to.
+        val preFriendList = SecureDatabase.instance?.accountDao()?.observeSubscriptionKeys(user!!.filter)
+        Assert.assertEquals("Unexpected number of friends in friends list!",1, preFriendList?.value?.size)
+
+        var capturedRotatePublishKey: ByteArray? = null
+        val captureRotatePublishKey = fun(key: SecretKey) {
+            capturedRotatePublishKey = key.encoded
+        }
+        exchange.friendInfo.agreement = SharedSecretExchangeWrapper(exchange.friendInfo.agreement!!, captureSecretKey = captureRotatePublishKey)
 
         // Finalize that exchange to add the new friend to the user's account.
         exchange.finalizeExchange()
@@ -380,17 +518,16 @@ class SubscriptionExchangeTest {
         // Check to see that the keys and algo descriptions are there as well.
         val subscriptionRotatePublish = SecureDatabase.instance?.keyDao()?.findKey(friendAccount.key1)
         val subscriptionRead = SecureDatabase.instance?.keyDao()?.findKey(friendAccount.key2)
-        val subscriptionRotateRead = SecureDatabase.instance?.keyDao()?.findKey(friendAccount.key3)
 
         // Key 1: Subscription rotation notification publish key (the key used to notify a subscriber that you're rotating
         Assert.assertEquals("Friend's rotate notification publish key algorithm does not match the expected algorithm!",
-                rotCipherDesc.toString(),
+                restoredSecretExchange.secretAlgo.toString(),
                 userSymmetricDecode(subscriptionRotatePublish!!.cipher)
         )
 
-        Assert.assertEquals("Friend's rotate notification publish key data does not match the expected key data!",
+        Assert.assertArrayEquals("Friend's rotate notification publish key data does not match the expected key data!",
                 capturedRotatePublishKey!!,
-                subscriptionRotatePublish.key
+                CliqueConfig.encodedStringToByteArray(subscriptionRotatePublish.key, userSymKeyCipherProvider.cipher(Cipher.DECRYPT_MODE, userSymKey))
         )
 
         // Key 2: Subscription Read Key (the key used to read a subscriber's feed)
@@ -401,153 +538,6 @@ class SubscriptionExchangeTest {
         Assert.assertEquals("Friend's subscription read key data does not match the expected key data!",
                 friendReadKey,
                 userSymmetricDecode(subscriptionRead.key)
-        )
-
-        // Key 3: Subscription rotation read key (the key you use to decode a subscription rotation event from the subscriber).
-        Assert.assertEquals("Friend's subscription rotation read key algorithm does not match the expected algorithm!",
-                rotCipherDesc.toString(),
-                userSymmetricDecode(subscriptionRotateRead!!.cipher)
-        )
-        Assert.assertEquals("Friend's subscription rotation read key data does not match the expected key data!",
-                CliqueConfig.encodedStringToString(rotateKey, exchangeCipher.invoke(Cipher.DECRYPT_MODE)),
-                userSymmetricDecode(subscriptionRotateRead.key)
-        )
-
-        // Finally, check to see that the list of friends matches what is expected.
-        Assert.assertEquals("Unexpected number of friends in friends list!",2, preFriendList?.value?.size)
-        Assert.assertNotNull("Could not find the added friend!", preFriendList?.value?.firstOrNull { friend ->
-            userSymmetricDecode(friend.subscriber) ==  FRIEND_ONE_DISPLAY_NAME
-        })
-    }
-
-    /**
-     * You're responding to a request, then creating a friend after you send a response.
-     */
-    @Test
-    fun testCreateFriendFromRequest() {
-        // First, do what we did above to create a mock response to the invitation (request)
-        var rotCipherDesc: AsymmetricEncryption  = AsymmetricEncryptionDesc.DEFAULT
-
-        val keyPair = rotCipherDesc.generateKeyPair(FRIEND_ONE_NAME)
-        val rotateKey = CliqueConfig.byteArrayToEncodedString(keyPair.private.encoded, exchangeCipher.invoke(Cipher.ENCRYPT_MODE))
-
-        val request = Mockito.mock(Invitation::class.java)
-
-        Mockito.`when`(request.readAlgo).thenReturn(CliqueConfig.stringToEncodedString(userAsym.toString(), exchangeCipher.invoke(Cipher.ENCRYPT_MODE)))
-        Mockito.`when`(request.readKey).thenReturn(
-                CliqueConfig.stringToEncodedString(
-                        friendReadKey,
-                        exchangeCipher.invoke(Cipher.ENCRYPT_MODE)
-                )
-        )
-        Mockito.`when`(request.rotateAlgo).thenReturn(CliqueConfig.stringToEncodedString(rotCipherDesc.toString(), exchangeCipher.invoke(Cipher.ENCRYPT_MODE)))
-        Mockito.`when`(request.rotateKey).thenReturn(rotateKey)
-        Mockito.`when`(request.url).thenReturn(CliqueConfig.stringToEncodedString(FRIEND_ONE_URL, exchangeCipher.invoke(Cipher.ENCRYPT_MODE)))
-
-        // Read the response, putting the data into the exchange.
-        exchange.readInvitation(request)
-
-        // Assert that the data matches what you expect.
-        val userDecrypter = fun(string: String) : String =
-                CliqueConfig.encodedStringToString(string, userSymKeyCipherProvider.cipher(Cipher.DECRYPT_MODE, userSymKey))
-
-        Assert.assertEquals("Friend read algorithm does not match!", userAsym.toString(), userDecrypter(exchange.friendInfo.readAlgo!!))
-        Assert.assertEquals("Friend read key does not match!",
-                friendReadKey,
-                userDecrypter(exchange.friendInfo.readKey!!)
-        )
-        Assert.assertEquals("Friend rotate algorithm does not match!", rotCipherDesc.toString(), userDecrypter(exchange.friendInfo.rotateReadAlgo!!))
-        Assert.assertEquals("Friend rotate key does not match!",
-                CliqueConfig.encodedStringToString(rotateKey, exchangeCipher.invoke(Cipher.DECRYPT_MODE)),
-                userDecrypter(exchange.friendInfo.rotateReadKey!!)
-        )
-        Assert.assertEquals("Friend publish url does not match!", FRIEND_ONE_URL, userDecrypter(exchange.friendInfo.url!!))
-
-        // Second, do what we did above to create a friend request (invitation)
-        var capturedRotatePublishKey: String? = null
-        var capturedRotateReadKey: String? = null
-        val captureRotationKeyPair = fun(keyPair: KeyPair) {
-            capturedRotateReadKey = CliqueConfig.byteArrayToEncodedString(keyPair.private.encoded, exchangeCipher.invoke(Cipher.ENCRYPT_MODE))
-            capturedRotatePublishKey = CliqueConfig.byteArrayToEncodedString(keyPair.public.encoded, userSymKeyCipherProvider.cipher(Cipher.ENCRYPT_MODE, userSymKey))
-        }
-        rotCipherDesc = AsymetricEncryptionWrapper(AsymmetricEncryptionDesc.DEFAULT, captureRotationKeyPair)
-
-        val invitation = exchange.createInvitation(FRIEND_ONE_DISPLAY_NAME, rotCipherDesc)
-
-        Assert.assertNotNull("Invitation should not be null!", invitation)
-        Assert.assertEquals("Invitation URL does not match expected!", USER_URL, decoder(invitation!!.url))
-        Assert.assertEquals("Invitation read key does not match expected!", userReadKey, decoder(invitation.readKey))
-        Assert.assertEquals("Invitation read key algo does not match expected!", userAsym.toString(), decoder(invitation.readAlgo))
-        Assert.assertEquals("Invitation rotate key does not match expected!", capturedRotateReadKey, invitation.rotateKey)
-        Assert.assertEquals("Invitation rotate key algo does not match expected!", rotCipherDesc.toString(), decoder(invitation.rotateAlgo))
-
-        // Load up the existing friends list to have something to compare to.
-        val preFriendList = SecureDatabase.instance?.accountDao()?.findSubscriptionKeys(user!!.filter)
-        Assert.assertEquals("Unexpected number of friends in friends list!",1, preFriendList?.value?.size)
-
-        exchange.finalizeExchange()
-
-        // Grab all the information that you'll need to verify that a friend account has been set up.
-        val userConfigCipher = fun(mode: Int): Cipher {
-            return configCipherPublicProvider.cipher(mode, userConfigKey!!)
-        }
-
-        val friendAccountName = CliqueConfig.stringToEncodedString(FRIEND_ONE_DISPLAY_NAME, userConfigCipher.invoke(Cipher.ENCRYPT_MODE))
-        val friendAccount = SecureDatabase.instance?.accountDao()?.findAccount(friendAccountName)
-        val userAccountName = CliqueConfig.stringToEncodedString(user!!.name, userConfigCipher.invoke(Cipher.ENCRYPT_MODE))
-        val userAccount = SecureDatabase.instance?.accountDao()?.findAccount(userAccountName)
-                ?: throw NullPointerException("Could not find user account!")
-
-        val userConfigDecode = fun(string: String) : String {
-            return CliqueConfig.encodedStringToString(string, userConfigCipher.invoke(Cipher.DECRYPT_MODE))
-        }
-
-        val userSymmetricDecode = fun(string: String) : String {
-            return CliqueConfig.encodedStringToString(string, userSymKeyCipherProvider.cipher(Cipher.DECRYPT_MODE, userSymKey))
-        }
-
-        // Verify that the friend is there and has the right information.
-        Assert.assertNotNull("A friend account should be present!", friendAccount)
-        Assert.assertEquals("Friend's display name does not match expected!", FRIEND_ONE_DISPLAY_NAME, userSymmetricDecode(friendAccount!!.displayName))
-        Assert.assertEquals("Friend's filter is not the user's filter!", userAccount.filter, friendAccount.filter)
-        Assert.assertEquals("Friend's symmetric key is not the users' symmetric key!", userAccount.sym, friendAccount.sym)
-        Assert.assertEquals("Friend's symmetric algorithm is not the users' symmetric algorithm!", userAccount.algo, friendAccount.algo)
-        Assert.assertEquals("Friend's publish url is not the expected url!", FRIEND_ONE_URL, userSymmetricDecode(friendAccount.url))
-
-        // Check to see that the keys and algo descriptions are there as well.
-        val subscriptionRotatePublish = SecureDatabase.instance?.keyDao()?.findKey(friendAccount.key1)
-        val subscriptionRead = SecureDatabase.instance?.keyDao()?.findKey(friendAccount.key2)
-        val subscriptionRotateRead = SecureDatabase.instance?.keyDao()?.findKey(friendAccount.key3)
-
-        // Key 1: Subscription rotation notification publish key (the key used to notify a subscriber that you're rotating
-        Assert.assertEquals("Friend's rotate notification publish key algorithm does not match the expected algorithm!",
-                rotCipherDesc.toString(),
-                userSymmetricDecode(subscriptionRotatePublish!!.cipher)
-        )
-
-        Assert.assertEquals("Friend's rotate notification publish key data does not match the expected key data!",
-                capturedRotatePublishKey!!,
-                subscriptionRotatePublish.key
-        )
-
-        // Key 2: Subscription Read Key (the key used to read a subscriber's feed)
-        Assert.assertEquals("Friend's subscription read key algorithm does not match the expected algorithm!",
-                userAsym.toString(),
-                userSymmetricDecode(subscriptionRead!!.cipher)
-        )
-        Assert.assertEquals("Friend's subscription read key data does not match the expected key data!",
-                friendReadKey,
-                userSymmetricDecode(subscriptionRead.key)
-        )
-
-        // Key 3: Subscription rotation read key (the key you use to decode a subscription rotation event from the subscriber).
-        Assert.assertEquals("Friend's subscription rotation read key algorithm does not match the expected algorithm!",
-                rotCipherDesc.toString(),
-                userSymmetricDecode(subscriptionRotateRead!!.cipher)
-        )
-        Assert.assertEquals("Friend's subscription rotation read key data does not match the expected key data!",
-                CliqueConfig.encodedStringToString(rotateKey, exchangeCipher.invoke(Cipher.DECRYPT_MODE)),
-                userSymmetricDecode(subscriptionRotateRead.key)
         )
 
         // Finally, check to see that the list of friends matches what is expected.

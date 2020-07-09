@@ -2,9 +2,10 @@ package org.ajar.clique.transaction
 
 import org.ajar.clique.CliqueConfig
 import org.ajar.clique.database.SecureDatabase
-import org.ajar.clique.encryption.AsymmetricEncryption
-import org.ajar.clique.encryption.AsymmetricEncryptionDesc
+import org.ajar.clique.encryption.*
 import org.ajar.clique.facade.User
+import java.security.PrivateKey
+import java.security.PublicKey
 import javax.crypto.Cipher
 
 /**
@@ -18,15 +19,15 @@ import javax.crypto.Cipher
  * @property url this user's publish url
  * @property readKey this user's public read key for the url
  * @property readAlgo the algo used by the read key
- * @property rotateKey a freshly created asymmetric private key for the recipient to use to publish their rotate requests to you
- * @property rotateAlgo the algo used by the rotate key
+ * @property rotateKey a freshly created asymmetric private key for the recipient to generate a shared secret with
+ * @property agreement the algo that both parties agree on for their created shared secret
  */
 interface Invitation {
     val url: String
     val readKey: String
     val readAlgo: String
     val rotateKey: String
-    val rotateAlgo: String
+    val agreement: String
 }
 
 private data class InvitationData(
@@ -34,32 +35,52 @@ private data class InvitationData(
         override val readKey: String,
         override val readAlgo: String,
         override val rotateKey: String,
-        override val rotateAlgo: String
+        override val agreement: String
 ) : Invitation
 
 class SubscriptionExchange private constructor(private val user: User, private val exchangeCipher: (Int) -> Cipher?) {
 
     private data class KeyInfo(val desc: String, val key: String)
 
-    internal data class FriendInfo(
-            var name: String? = null,
-            var url: String? = null,
-            var rotateWriteKey: String? = null, // Publish a rotate message to the subscriber
-            var rotateWriteAlgo: String? = null,
-            var readKey: String? = null, // Read the subscriber's feed
-            var readAlgo: String? = null,
-            var rotateReadKey: String? = null, // Read a rotate message published by the subscriber
-            var rotateReadAlgo: String? = null
+    internal data class FriendInfoAggregator(
+            var name: String? = null, // Friends name, transcoded for subscription creation
+            var url: String? = null, // Friends url, transcoded for subscription creation
+            var friendReadKey: String? = null, // Friend's key (private), transcoded for CliqueKey creation
+            var friendReadAlgo: String? = null, // Friend's read key algo, transcoded for CliqueKey creation
+            internal var friendRotateKey: PrivateKey? = null, // Friend's rotate key (private)
+            internal var personalRotateKey: PublicKey? = null, // Personal rotate key (public)
+            internal var agreement: SharedSecretExchange? = null
     ) {
         val ready: Boolean
             get() {
-                return listOf(name, url, readKey, readAlgo, rotateReadKey, rotateReadAlgo, rotateWriteKey, rotateWriteAlgo).none { it == null }
+                return listOf(name, url, friendReadKey, friendReadAlgo).none { it == null }
+                        && friendRotateKey != null
+                        && personalRotateKey != null
+                        && agreement != null
             }
+
+        fun publishInfo(encode: (Int) -> Cipher?): FriendInfo? {
+            return if(ready) {
+                val secretKey = CliqueConfig.byteArrayToEncodedString(agreement!!.generateSecret(friendRotateKey!!).encoded, encode.invoke(Cipher.ENCRYPT_MODE)!!)
+                val secretKeyAlgo = CliqueConfig.stringToEncodedString(agreement!!.secretAlgo.toString(), encode.invoke(Cipher.ENCRYPT_MODE)!!)
+
+                return FriendInfo(name!!, url!!, friendReadKey!!, friendReadAlgo!!, secretKey, secretKeyAlgo)
+            } else null
+        }
     }
 
-    internal val friendInfo: FriendInfo = FriendInfo()
+    data class FriendInfo(
+            val name: String,
+            val url: String,
+            val friendReadKey: String,
+            val friendReadAlgo: String,
+            val rotateKey: String,
+            val rotateKeyAlgo: String
+    )
 
-    fun createInvitation(friendName: String, rotationKeyPairEncryption: AsymmetricEncryption = AsymmetricEncryptionDesc.DEFAULT) : Invitation? {
+    internal val friendInfo: FriendInfoAggregator = FriendInfoAggregator()
+
+    fun createInvitation(friendName: String, sharedSecret: SharedSecretExchange = SharedSecretExchangeDesc.DEFAULT) : Invitation? {
         return user.invitationInfo.invoke()?.let { invitationInfo ->
             // Transcode your read key and algo for the invitation.
             val transcodedReadInfo = SecureDatabase.instance?.keyDao()?.findKey(invitationInfo.feedReadKey)?.let { readCliqueKey ->
@@ -71,42 +92,41 @@ class SubscriptionExchange private constructor(private val user: User, private v
             // Transcode your url for the invitation.
             val transcodedUrl = CliqueConfig.transcodeString(invitationInfo.subscription, user.symCipher.invoke(Cipher.DECRYPT_MODE)!!, exchangeCipher.invoke(Cipher.ENCRYPT_MODE)!!)
 
-            // Generate a rotation key: The part you will keep will be to publish a rotate message to the subscriber. That part you send will
-            // be the part that will enable them to read the message.
-            rotationKeyPairEncryption.generateKeyPair(friendName).let { pair ->
-                val encryptedCipherInfo = CliqueConfig.stringToEncodedString(rotationKeyPairEncryption.toString(), user.symCipher.invoke(Cipher.ENCRYPT_MODE)!!)
+            val transcodedSharedSecretDesc = CliqueConfig.stringToEncodedString(sharedSecret.toString(), exchangeCipher.invoke(Cipher.ENCRYPT_MODE)!!)
+            sharedSecret.generateKeyPair().let { pair ->
+                val encodedKey = CliqueConfig.byteArrayToEncodedString(pair.private.encoded, exchangeCipher.invoke(Cipher.ENCRYPT_MODE)!!)
 
                 friendInfo.name = CliqueConfig.stringToEncodedString(friendName, user.symCipher.invoke(Cipher.ENCRYPT_MODE)!!)
-                friendInfo.rotateWriteKey = CliqueConfig.byteArrayToEncodedString(pair.public.encoded, user.symCipher.invoke(Cipher.ENCRYPT_MODE)!!)
-                friendInfo.rotateWriteAlgo = encryptedCipherInfo
-
-                val exchangeRotateCipherInfo = CliqueConfig.stringToEncodedString(rotationKeyPairEncryption.toString(), exchangeCipher.invoke(Cipher.ENCRYPT_MODE)!!)
+                friendInfo.personalRotateKey = pair.public
+                friendInfo.agreement = sharedSecret
 
                 return InvitationData(
                         transcodedUrl,
                         transcodedReadInfo!!.key,
                         transcodedReadInfo.desc,
-                        CliqueConfig.byteArrayToEncodedString(pair.private.encoded, exchangeCipher.invoke(Cipher.ENCRYPT_MODE)!!),
-                        exchangeRotateCipherInfo
+                        encodedKey,
+                        transcodedSharedSecretDesc
                 )
             }
         }
     }
 
     fun readInvitation(invitation: Invitation) {
-        friendInfo.readKey = CliqueConfig.transcodeString(invitation.readKey, exchangeCipher.invoke(Cipher.DECRYPT_MODE)!!, user.symCipher.invoke(Cipher.ENCRYPT_MODE)!!)
-        friendInfo.readAlgo = CliqueConfig.transcodeString(invitation.readAlgo, exchangeCipher.invoke(Cipher.DECRYPT_MODE)!!, user.symCipher.invoke(Cipher.ENCRYPT_MODE)!!)
+        friendInfo.friendReadKey = CliqueConfig.transcodeString(invitation.readKey, exchangeCipher.invoke(Cipher.DECRYPT_MODE)!!, user.symCipher.invoke(Cipher.ENCRYPT_MODE)!!)
+        friendInfo.friendReadAlgo = CliqueConfig.transcodeString(invitation.readAlgo, exchangeCipher.invoke(Cipher.DECRYPT_MODE)!!, user.symCipher.invoke(Cipher.ENCRYPT_MODE)!!)
         friendInfo.url = CliqueConfig.transcodeString(invitation.url, exchangeCipher.invoke(Cipher.DECRYPT_MODE)!!, user.symCipher.invoke(Cipher.ENCRYPT_MODE)!!)
-        friendInfo.rotateReadKey = CliqueConfig.transcodeString(invitation.rotateKey, exchangeCipher.invoke(Cipher.DECRYPT_MODE)!!, user.symCipher.invoke(Cipher.ENCRYPT_MODE)!!)
-        friendInfo.rotateReadAlgo = CliqueConfig.transcodeString(invitation.rotateAlgo, exchangeCipher.invoke(Cipher.DECRYPT_MODE)!!, user.symCipher.invoke(Cipher.ENCRYPT_MODE)!!)
+
+        if(friendInfo.agreement == null) friendInfo.agreement = SharedSecretExchangeDesc.fromString(CliqueConfig.encodedStringToString(invitation.agreement, exchangeCipher.invoke(Cipher.DECRYPT_MODE)!!))
+
+        val rotateKeyBytes = CliqueConfig.encodedStringToByteArray(invitation.rotateKey, exchangeCipher.invoke(Cipher.DECRYPT_MODE)!!)
+        friendInfo.friendRotateKey = friendInfo.agreement!!.privateKeyFromBytes(rotateKeyBytes)
     }
 
     fun finalizeExchange() {
-        if(friendInfo.ready) {
-            user.addFriend(friendInfo)
-        } else {
-            throw NullPointerException("Friend Info is incomplete!")
-        }
+        friendInfo.publishInfo(user.symCipher)?.let {
+            user.addFriend(it)
+            true
+        }?: throw NullPointerException("Friend Info is incomplete!")
     }
 
     companion object {

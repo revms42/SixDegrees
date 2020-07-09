@@ -4,7 +4,7 @@ import android.content.Context
 import org.ajar.clique.CliqueConfig
 import org.ajar.clique.CliqueConfigTest
 import org.ajar.clique.CliqueTestHelper
-import org.ajar.clique.SymetricEncryptionWrapper
+import org.ajar.clique.SymmetricEncryptionWrapper
 import org.ajar.clique.database.CliqueAccount
 import org.ajar.clique.database.CliqueSubscription
 import org.ajar.clique.database.SecureDAOTestHelper
@@ -88,7 +88,7 @@ class UserFacadeTest {
         }
 
         val originalEncryption = CliqueConfig.tableNameEncryption
-        val wrappedEncryption = SymetricEncryptionWrapper(originalEncryption, captureKey)
+        val wrappedEncryption = SymmetricEncryptionWrapper(originalEncryption, captureKey)
         CliqueConfig.tableNameEncryption = wrappedEncryption
 
         userAsym.createKeyGenSpec = CliqueTestHelper.createTestRSAParameters(userAsym)
@@ -126,7 +126,7 @@ class UserFacadeTest {
         // Note: Since we use Transformations to map the result of the DB query to the user's friends list, we have to look
         // at the result of the DB itself, because there will be no observing of changes for the mediator live data
         // set up by the transformation.
-        val friends = SecureDatabase.instance?.accountDao()?.findSubscriptionKeys(user!!.filter)
+        val friends = SecureDatabase.instance?.accountDao()?.observeSubscriptionKeys(user!!.filter)
 
         Assert.assertEquals("User should have themselves (only) in their friends list!", 1, friends?.value?.size)
         Assert.assertEquals("User should be listed as the subscriber of the account!", USER_DISPLAY_NAME, decryptedSym(friends?.value?.get(0)?.subscriber!!))
@@ -158,24 +158,20 @@ class UserFacadeTest {
         // Note: Since we use Transformations to map the result of the DB query to the user's friends list, we have to look
         // at the result of the DB itself, because there will be no observing of changes for the mediator live data
         // set up by the transformation.
-        val friends = SecureDatabase.instance?.accountDao()?.findSubscriptionKeys(user!!.filter)
+        val friends = SecureDatabase.instance?.accountDao()?.observeSubscriptionKeys(user!!.filter)
 
         Assert.assertEquals("User should have themselves (only) in their friends list!", 1, friends?.value?.size)
         Assert.assertEquals("User should be listed as the subscriber of the account!", USER_DISPLAY_NAME, decryptedSym(friends?.value?.get(0)?.subscriber!!))
         Assert.assertEquals("User's URL should be listed as the subscription in the first friend!", USER_URL, decryptedSym(friends.value?.get(0)?.subscription!!))
-
-        val rotations = SecureDatabase.instance?.accountDao()?.findRotationKeys(user!!.filter)
-
-        Assert.assertEquals("User should have themselves (only) in their rotations list!", 1, rotations?.value?.size)
-        Assert.assertEquals("User should be listed as the subscriber of the account!", USER_DISPLAY_NAME, decryptedSym(rotations?.value?.get(0)?.subscriber!!))
 
         val key = userSym.generateSecretKey("MockUserKey")
 
         val encryptedDisplayName = encryptedSym(FRIEND_ONE_DISPLAY_NAME)
         val encryptedUrl = encryptedSym(FRIEND_ONE_URL)
         val encryptedKey = encryptedSym(FRIEND_ONE_READ_KEY)
+        val encryptedRotate = encryptedSym(FRIEND_ONE_ROTATE_KEY)
 
-        val friendSubscription = CliqueSubscription(encryptedDisplayName, encryptedUrl, encryptedKey)
+        val friendSubscription = CliqueSubscription(encryptedDisplayName, encryptedUrl, encryptedKey, encryptedRotate)
 
         // The friends should have their information encrypted with the user's sym encryption.
         Friend.fromSubscription(friendSubscription) {
@@ -186,11 +182,10 @@ class UserFacadeTest {
                 "Invalid Name",
                 encryptedDisplayName,
                 user!!.filter,
+                encryptedRotate,
                 encryptedKey,
                 "Invalid Key",
-                "Invalid Key",
                 "Probably Should Match",
-                "The User Info",
                 encryptedUrl
         )
 
@@ -199,21 +194,15 @@ class UserFacadeTest {
         Assert.assertNotNull("User should now have a non-null friends list!", friends.value)
         Assert.assertEquals("User should have exactly two friends in their friends list!", 2, friends.value?.size?: -1)
 
-        var userIndex = if(decryptedSym(friends.value?.get(0)?.subscriber!!) == USER_DISPLAY_NAME) 0 else 1
-        var friendIndex = if(userIndex == 0) 1 else 0
+        val userIndex = if(decryptedSym(friends.value?.get(0)?.subscriber!!) == USER_DISPLAY_NAME) 0 else 1
+        val friendIndex = if(userIndex == 0) 1 else 0
 
         Assert.assertEquals("User should be listed as the first subscriber of the account!", USER_DISPLAY_NAME, decryptedSym(friends.value?.get(userIndex)?.subscriber!!))
         Assert.assertEquals("User's URL should be listed as the subscription in the first friend!", USER_URL, decryptedSym(friends.value?.get(userIndex)?.subscription!!))
         Assert.assertEquals("User's friend's display name does not match expected!", FRIEND_ONE_DISPLAY_NAME, decryptedSym(friends.value?.get(friendIndex)?.subscriber!!))
         Assert.assertEquals("User's friend's url does not match expected!", FRIEND_ONE_URL, decryptedSym(friends.value?.get(friendIndex)?.subscription!!))
         Assert.assertEquals("User's friend's read key does not match expected!", FRIEND_ONE_READ_KEY, decryptedSym(friends.value?.get(friendIndex)?.feedReadKey!!))
-
-        userIndex = if(decryptedSym(rotations.value?.get(0)?.subscriber!!) == USER_DISPLAY_NAME) 0 else 1
-        friendIndex = if(userIndex == 0) 1 else 0
-
-        Assert.assertEquals("User should have exactly two rotations in their rotations list!", 2, rotations.value?.size)
-        Assert.assertEquals("User should be listed as the first subscriber of the account!", USER_DISPLAY_NAME, decryptedSym(rotations.value?.get(userIndex)?.subscriber!!))
-        Assert.assertEquals("User's friend should be listed as the second subscriber of the account!", FRIEND_ONE_DISPLAY_NAME, decryptedSym(rotations.value?.get(friendIndex)?.subscriber!!))
+        Assert.assertEquals("User's friend's rotate key does not match expected!", FRIEND_ONE_ROTATE_KEY, decryptedSym(friends.value?.get(friendIndex)?.rotateKey!!))
     }
 
     companion object {
@@ -223,6 +212,7 @@ class UserFacadeTest {
         const val USER_URL = "https://MockStorage.net"
 
         const val FRIEND_ONE_READ_KEY = "MockFriendOneReadKey"
+        const val FRIEND_ONE_ROTATE_KEY = "MockFriendOneRotateKey"
         const val FRIEND_ONE_DISPLAY_NAME = "Mock Friend One"
         const val FRIEND_ONE_URL = "https://mockstorage.net/friend1"
     }

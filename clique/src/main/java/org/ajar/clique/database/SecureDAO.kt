@@ -39,10 +39,13 @@ interface CliqueAccountDAO {
     fun findFilterForUser(user: String): String?
 
     @Query("SELECT ${CliqueAccount.COLUMN_DISPLAY_NAME}, ${CliqueAccount.COLUMN_URL}, ${CliqueAccount.COLUMN_KEY_2} FROM ${CliqueAccount.TABLE_NAME} WHERE ${CliqueAccount.COLUMN_FILTER} = :filter")
-    fun findSubscriptionKeys(filter: String): LiveData<List<CliqueSubscription>?>
+    fun observeSubscriptionKeys(filter: String): LiveData<List<CliqueSubscription>?>
 
-    @Query("SELECT ${CliqueAccount.COLUMN_DISPLAY_NAME}, ${CliqueAccount.COLUMN_KEY_1} FROM ${CliqueAccount.TABLE_NAME} WHERE ${CliqueAccount.COLUMN_FILTER} = :filter")
-    fun findRotationKeys(filter: String): LiveData<List<CliqueRotateDescription>?>
+    @Query("SELECT ${CliqueAccount.COLUMN_DISPLAY_NAME}, ${CliqueAccount.COLUMN_URL}, ${CliqueAccount.COLUMN_KEY_2} FROM ${CliqueAccount.TABLE_NAME} WHERE ${CliqueAccount.COLUMN_FILTER} = :filter")
+    fun findSubscriptionKeys(filter: String): List<CliqueSubscription>?
+
+    @Query("SELECT * FROM ${CliqueAccount.TABLE_NAME} WHERE ${CliqueAccount.COLUMN_DISPLAY_NAME} = :displayName LIMIT 1")
+    fun findAccountByDisplayName(displayName: String): CliqueAccount?
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     fun addAccount(account: CliqueAccount)

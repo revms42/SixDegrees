@@ -42,21 +42,30 @@ one version of the app. Another passcode will show you a different version of th
 - Load up available forms of encryption and let the user determine which one they want to use.
 - Have services that monitor for the presence of new personal messages from your friends' feeds.
 
+## Key Conventions Used
+- Publishing Key: The key used to publish messages to your own feed. This is an asymmetric public key 
+used to encrypt the message in your feed.
+- Reading Key: The key used to read a message that you've published, give to a subscriber. This is
+an asymmetric private key corresponding to the public key above.
+- Rotation Key: The key used when encryption is rotated. This is a shared secret key that is created
+during a subscription event and is used between a publisher and a subscriber to change the reading key
+or url associated with a feed.
+
 ## Message Structure
 All messages
 (encrypted checksum x 1 32 bit byte)(Timestamp x 1 64 bit byte)(remaining message)
 
-Feed Messages - Publish Encrypted
+Feed Messages Header - Publish Encrypted
+(Feed Message ID x 1 32 bit byte)(Symmetric Cipher Desc)(Symmetric Key)
+
+Feed Message Body - Published Symmetric Encrypted
+(html formatted message)
+
+Comment Request Messages - Rotation Encrypted
 (Feed Message ID x 1 32 bit byte)(html formatted message)
 
-Comment Request Messages - Personal Encrypted
-(Feed Message ID x 1 32 bit byte)(html formatted message)
-
-Comment Append Messages - Publish Encrypted
+Comment Append Messages - Original Message Published Symmetric Encrypted
 (Feed Message ID x 1 32 bit byte)(Commenter Name + html formatted message)
 
-Key Rotation Messages - Personal Encrypted
-(Key Rotation marker x 1 8 bit byte)(new publish public key)
-
-Feed Location Change Messages - Personal Encrypted
-(Location Change marker x 1 8 bit byte)(new location url)
+Key Rotation Messages - Rotation Encrypted
+(Key Rotation marker x 1 8 bit byte)(new publish cipher desc)(new publish public key)(new url publish location)

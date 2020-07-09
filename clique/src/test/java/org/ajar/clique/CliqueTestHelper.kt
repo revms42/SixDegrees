@@ -1,7 +1,6 @@
 package org.ajar.clique
 
-import org.ajar.clique.encryption.AsymmetricEncryption
-import org.ajar.clique.encryption.SymmetricEncryption
+import org.ajar.clique.encryption.*
 import java.security.Key
 import java.security.KeyPair
 import java.security.PrivateKey
@@ -23,6 +22,9 @@ object CliqueTestHelper {
                 return null
             }
 
+    fun getOnlySupportedECDHAlgo() : SymmetricEncryption =
+            EncryptionBuilder.symmetric().algorithm(AlgorithmDesc.toAlgorithm("TlsPremasterSecret")).build() as SymmetricEncryption
+
     fun switchCliqueConfigForJDK() {
         CliqueConfig.setStringEncoder { array:ByteArray, _:Int  ->
             Base64.getEncoder().encodeToString(array)
@@ -33,7 +35,7 @@ object CliqueTestHelper {
     }
 }
 
-class SymetricEncryptionWrapper(private val wrapped: SymmetricEncryption,
+class SymmetricEncryptionWrapper(private val wrapped: SymmetricEncryption,
                                  private val setKey: ((Key) -> Unit)? = null
 ) : SymmetricEncryption {
     override val secureRandom: String = wrapped.secureRandom
@@ -85,4 +87,49 @@ class AsymetricEncryptionWrapper(private val wrapped: AsymmetricEncryption,
     override fun toString(): String {
         return wrapped.toString()
     }
+}
+
+class SharedSecretExchangeWrapper(val wrappedExchange: SharedSecretExchange,
+                                  val captureKeyPair: ((KeyPair) -> Unit)? = null,
+                                  val captureSecretKey: ((SecretKey) -> Unit)? = null,
+                                  val captureKeyFromBytes: ((Key) -> Unit)? = null
+) : SharedSecretExchange {
+    override val algorithm: String = wrappedExchange.algorithm
+    override val keyGenerator: String = wrappedExchange.keyGenerator
+    override val keyAgreement: String = wrappedExchange.keyAgreement
+    override val agreementProvider: String = wrappedExchange.agreementProvider
+    override val generatorParameter: String = wrappedExchange.generatorParameter
+    override val secretAlgo: SymmetricEncryption = wrappedExchange.secretAlgo
+    override val secureRandom: String = wrappedExchange.secureRandom
+    override val randomProvider: String = wrappedExchange.randomProvider
+    override var createKeyGenSpec: (name: String) -> AlgorithmParameterSpec?
+        get() = wrappedExchange.createKeyGenSpec
+        set(value) {
+            wrappedExchange.createKeyGenSpec = value
+        }
+
+    override fun generateKeyPair(): KeyPair {
+        return wrappedExchange.generateKeyPair().also { captureKeyPair?.invoke(it) }
+    }
+
+    override fun generateSecret(key: PrivateKey): SecretKey {
+        return wrappedExchange.generateSecret(key).also { captureSecretKey?.invoke(it) }
+    }
+
+    override fun generateSecret(key: PublicKey): SecretKey {
+        return wrappedExchange.generateSecret(key).also { captureSecretKey?.invoke(it) }
+    }
+
+    override fun privateKeyFromBytes(keyBytes: ByteArray): PrivateKey {
+        return wrappedExchange.privateKeyFromBytes(keyBytes).also { captureKeyFromBytes?.invoke(it) }
+    }
+
+    override fun publicKeyFromBytes(keyBytes: ByteArray): PublicKey {
+        return wrappedExchange.publicKeyFromBytes(keyBytes).also { captureKeyFromBytes?.invoke(it) }
+    }
+
+    override fun toString(): String {
+        return wrappedExchange.toString()
+    }
+
 }

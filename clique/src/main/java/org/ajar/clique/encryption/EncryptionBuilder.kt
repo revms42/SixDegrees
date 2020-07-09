@@ -2,13 +2,11 @@ package org.ajar.clique.encryption
 
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
-import org.ajar.clique.CliqueConfig
 import org.ajar.clique.encryption.Encryption.Companion.createSpecBuilder
 import java.security.*
-import java.security.spec.AlgorithmParameterSpec
-import java.security.spec.PKCS8EncodedKeySpec
-import java.security.spec.X509EncodedKeySpec
+import java.security.spec.*
 import javax.crypto.Cipher
+import javax.crypto.KeyAgreement
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.SecretKeySpec
@@ -38,6 +36,25 @@ interface Encryption {
             this.resolverProvider = resolver
         }
     }
+}
+
+interface SharedSecretExchange {
+    val algorithm: String
+    val keyGenerator: String
+    val keyAgreement: String
+    val agreementProvider: String
+    val generatorParameter: String
+    val secretAlgo: SymmetricEncryption
+    val secureRandom: String
+    val randomProvider: String
+
+    var createKeyGenSpec: (name: String) -> AlgorithmParameterSpec?
+
+    fun generateKeyPair(): KeyPair
+    fun generateSecret(key: PrivateKey): SecretKey
+    fun generateSecret(key: PublicKey): SecretKey
+    fun privateKeyFromBytes(keyBytes: ByteArray): PrivateKey
+    fun publicKeyFromBytes(keyBytes: ByteArray): PublicKey
 }
 
 interface SymmetricEncryption : Encryption {
@@ -256,6 +273,102 @@ data class AsymmetricEncryptionDesc(
     }
 }
 
+data class SharedSecretExchangeDesc(
+        override val algorithm: String,
+        override val keyGenerator: String,
+        override val keyAgreement: String,
+        override val agreementProvider: String,
+        override val generatorParameter: String,
+        override val secretAlgo: SymmetricEncryption,
+        override val secureRandom: String,
+        override val randomProvider: String
+) : SharedSecretExchange {
+    override var createKeyGenSpec: (name: String) -> AlgorithmParameterSpec? = ::ECGenParameterSpec
+
+    override fun toString() : String {
+        return "$algorithm,$keyGenerator,$keyAgreement,$agreementProvider,$generatorParameter,$secretAlgo,$secureRandom,$randomProvider"
+    }
+
+    override fun generateKeyPair(): KeyPair {
+        val keyPairGenerator = createKeyPairGenerator.invoke(algorithm, Encryption.resolverProvider(keyGenerator))
+
+        keyPairGenerator.initialize(createKeyGenSpec(generatorParameter))
+
+        return keyPairGenerator.generateKeyPair()
+    }
+
+    override fun generateSecret(key: PrivateKey): SecretKey = generateSecret(generateKeyPair().public, key)
+
+    override fun generateSecret(key: PublicKey): SecretKey = generateSecret(key, generateKeyPair().private)
+
+    private fun generateSecret(public: PublicKey, privateKey: PrivateKey): SecretKey {
+        val agreement = createKeyAgreement.invoke(keyAgreement, Encryption.resolverProvider(agreementProvider))
+
+        // TODO: This seems better, but I can find no examples.
+        // agreement.init(privateKey, params, random)
+        val random = createSecureRandom.invoke(secureRandom, Encryption.resolverProvider(randomProvider))
+        agreement.init(privateKey, random)
+
+        agreement.doPhase(public, true)
+
+        return agreement.generateSecret(secretAlgo.algorithm)
+    }
+
+    override fun privateKeyFromBytes(keyBytes: ByteArray): PrivateKey {
+        //TODO: Not sure if the key generator is the same as the factory
+        val factory = createKeyFactory.invoke(algorithm, Encryption.resolverProvider(keyGenerator))
+        return factory.generatePrivate(PKCS8EncodedKeySpec(keyBytes))
+    }
+
+    override fun publicKeyFromBytes(keyBytes: ByteArray): PublicKey {
+        //TODO: Not sure if the key generator is the same as the factory
+        val factory = createKeyFactory.invoke(algorithm, Encryption.resolverProvider(keyGenerator))
+        return factory.generatePublic(X509EncodedKeySpec(keyBytes))
+    }
+
+    companion object {
+        val DEFAULT by lazy { SharedSecretBuilder.create().build(SymmetricEncryptionDesc.DEFAULT)!! }
+
+        private var createKeyPairGenerator: (String, Provider?) -> KeyPairGenerator = KeyPairGenerator::getInstance
+
+        internal fun setKeyPairGeneratorCreator(keyPairGenerator: (String, Provider?) -> KeyPairGenerator) {
+            this.createKeyPairGenerator = keyPairGenerator
+        }
+
+        private var createKeyAgreement: (String, Provider?) -> KeyAgreement = KeyAgreement::getInstance
+
+        internal fun setKeyAgreementCreator(keyAgreementCreator: (String, Provider?) -> KeyAgreement) {
+            this.createKeyAgreement = keyAgreementCreator
+        }
+
+        private var createSecureRandom: (String, Provider?) -> SecureRandom = SecureRandom::getInstance
+
+        internal fun setSecureRandomCreator(secureRandom: (String, Provider?) -> SecureRandom) {
+            this.createSecureRandom = secureRandom
+        }
+
+        private var createKeyFactory: (String, Provider?) -> KeyFactory = KeyFactory::getInstance
+
+        internal fun setKeyFactoryCreator(factoryCreator: (String, Provider?) -> KeyFactory) {
+            this.createKeyFactory = factoryCreator
+        }
+
+        fun fromString(desc: String): SharedSecretExchangeDesc {
+            val parts = desc.split(",")
+            return SharedSecretExchangeDesc(
+                    parts[0],
+                    parts[1],
+                    parts[2],
+                    parts[3],
+                    parts[4],
+                    SymmetricEncryptionDesc.fromString(parts[5]),
+                    parts[6],
+                    parts[7]
+            )
+        }
+    }
+}
+
 sealed class CipherProvider(private val desc: Encryption) {
     class Symmetric(desc: SymmetricEncryption) : CipherProvider(desc) {
         override val keyFromBytes: (ByteArray) -> Key = desc::secretKeyFromBytes
@@ -441,6 +554,85 @@ class EncryptionBuilder private constructor(private val sym: Boolean) {
             builder.generatorProvider = builder.algorithm!!.keyGenerators.firstOrNull()
 
             return builder
+        }
+    }
+}
+
+class SharedSecretBuilder private constructor() {
+    private var algorithm: AlgorithmDesc? = null
+    private var keyPairGenerator: GeneratorDesc? = null
+    private var agreementProvider: KeyAgreementDesc? = null
+    private var parameterDesc: GeneratorParameterDesc? = null
+    private var secureRandomDesc: SecureRandomDesc? = null
+
+    fun build(desc: SymmetricEncryption): SharedSecretExchange? {
+        return SharedSecretExchangeDesc(
+                algorithm!!.name,
+                keyPairGenerator!!.provider.name,
+                agreementProvider!!.name,
+                agreementProvider!!.provider.name,
+                parameterDesc!!.name,
+                desc,
+                secureRandomDesc?.name?: desc.secureRandom,
+                secureRandomDesc?.provider?.name?: desc.secureRandomProvider
+        )
+    }
+
+    fun listAlgorithms(): List<AlgorithmDesc> {
+        return AlgorithmDesc.keyExchangeAlgorithms.toList()
+    }
+    fun algorithm(algo: AlgorithmDesc): SharedSecretBuilder {
+        algorithm = algo
+        return this
+    }
+
+    fun listKeyAgreements(): List<KeyAgreementDesc> {
+        return KeyAgreementDesc.all.values.toList()
+    }
+    fun keyAgreement(provider: KeyAgreementDesc): SharedSecretBuilder {
+        agreementProvider = provider
+        return this
+    }
+
+    fun listParameterDescriptions(): List<GeneratorParameterDesc> {
+        return GeneratorParameterDesc.all.values.toList()
+    }
+    fun paramDesc(desc: GeneratorParameterDesc): SharedSecretBuilder {
+        parameterDesc = desc
+        return this
+    }
+
+    fun listKeyGenerators(): List<GeneratorDesc> {
+        return algorithm!!.keyPairGenerators
+    }
+    fun keyGenerator(generator: GeneratorDesc): SharedSecretBuilder {
+        keyPairGenerator = generator
+        return this
+    }
+
+    fun listSecureRandomGenerators(): List<SecureRandomDesc> {
+        return SecureRandomDesc.all.values.toList()
+    }
+    fun secureRandom(secureRandom: SecureRandomDesc): SharedSecretBuilder {
+        secureRandomDesc = secureRandom
+        return this
+    }
+
+    companion object {
+
+
+        fun create() : SharedSecretBuilder {
+            val builder = SharedSecretBuilder()
+
+            builder.algorithm = AlgorithmDesc.toAlgorithm(KeyProperties.KEY_ALGORITHM_EC)
+            builder.agreementProvider = KeyAgreementDesc.findKeyAgreement("ECDH")
+            builder.keyPairGenerator = builder.algorithm?.keyPairGenerators?.first { generatorDesc ->
+                generatorDesc.provider == builder.agreementProvider!!.provider
+            }
+            builder.parameterDesc = GeneratorParameterDesc.findParameterDesc("NIST P-384")
+
+            return builder
+
         }
     }
 }
