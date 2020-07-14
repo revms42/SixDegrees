@@ -311,7 +311,24 @@ data class SharedSecretExchangeDesc(
 
         agreement.doPhase(public, true)
 
-        return agreement.generateSecret(secretAlgo.algorithm)
+        val bytes = agreement.generateSecret().let { rawArray ->
+            // The rawArray is almost never the correct size for the given algo. So, size it appropriately
+            when {
+                rawArray.size > (secretAlgo.keySize/8) -> rawArray.slice(0 until (secretAlgo.keySize/8)).toByteArray()
+                rawArray.size < (secretAlgo.keySize/8) -> {
+                    val finishedBytes = rawArray.toCollection(ArrayList())
+
+                    // TODO: I *don't* like this, but I need a predictable way to generate this.
+                    while (finishedBytes.size < (secretAlgo.keySize/8)) finishedBytes.add(' '.toByte())
+
+                    finishedBytes.toByteArray()
+                }
+                else -> rawArray
+            }
+        }
+
+        // The secret key bytes are almost always larger than the bits required by the secret algorithm.
+        return SecretKeySpec(bytes, secretAlgo.algorithm)
     }
 
     override fun privateKeyFromBytes(keyBytes: ByteArray): PrivateKey {
@@ -619,8 +636,6 @@ class SharedSecretBuilder private constructor() {
     }
 
     companion object {
-
-
         fun create() : SharedSecretBuilder {
             val builder = SharedSecretBuilder()
 

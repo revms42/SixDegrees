@@ -7,6 +7,7 @@ import org.ajar.clique.CliqueConfig
 import org.ajar.clique.database.*
 import org.ajar.clique.encryption.*
 import org.ajar.clique.transaction.SubscriptionExchange
+import java.security.InvalidKeyException
 import java.security.KeyStore
 import javax.crypto.Cipher
 
@@ -77,7 +78,7 @@ class User private constructor(
         internal val symCipher: (Int) -> Cipher?,
         private val feed: (value: String) -> String?,
         private val androidKeyStoreUserCipher: (Int) -> Cipher?,
-        private val symKeyTag: String
+        private val accountName: String
 ){
     fun writeFeedMessage(message: String): String? = feed(message)
 
@@ -93,6 +94,10 @@ class User private constructor(
             }
             return _friends
         }
+
+    internal fun getAccount() : CliqueAccount? {
+        return SecureDatabase.instance?.accountDao()?.findAccount(accountName)
+    }
 
     internal fun addFriend(friendInfo: SubscriptionExchange.FriendInfo) {
         val friendName = CliqueConfig.encodedStringToString(friendInfo.name, symCipher.invoke(Cipher.DECRYPT_MODE)!!)
@@ -110,7 +115,7 @@ class User private constructor(
 
         val dbName = CliqueConfig.stringToEncodedString(friendName, androidKeyStoreUserCipher.invoke(Cipher.ENCRYPT_MODE)!!)
 
-        val symKey = SecureDatabase.instance?.accountDao()?.findSymmetricDesc(symKeyTag)
+        val symKey = SecureDatabase.instance?.accountDao()?.findSymmetricDesc(accountName)
 
         SecureDatabase.instance?.accountDao()?.addAccount(CliqueAccount(
                 dbName,
@@ -250,8 +255,16 @@ class Friend private constructor(val displayName: String, val url: String, priva
      * Take raw encoded rotation information and decrypt it.
      * @param rotation encoded rotation information from this friend.
      */
-    fun decryptRotation(rotation: String) : String {
+    fun decryptStringRotation(rotation: String) : String {
         return  CliqueConfig.encodedStringToString(rotation, rotCipher.invoke(Cipher.DECRYPT_MODE)!!)
+    }
+
+    /**
+     * Take raw encoded rotation information and decrypt it to a byte array.
+     * @param rotation encoded rotation information from this friend.
+     */
+    fun decryptByteArrayRotation(rotation: String) : ByteArray {
+        return  CliqueConfig.encodedStringToByteArray(rotation, rotCipher.invoke(Cipher.DECRYPT_MODE)!!)
     }
 
     /**
@@ -260,6 +273,52 @@ class Friend private constructor(val displayName: String, val url: String, priva
      */
     fun encryptRotation(rotation: String) : String {
         return CliqueConfig.stringToEncodedString(rotation, rotCipher.invoke(Cipher.ENCRYPT_MODE)!!)
+    }
+
+    /**
+     * Create a rotation message that specifies the new values in the give user to the subscriber
+     * (i.e. this Friend)
+     * @param user the user initiating rotation
+     * @return a rotation that contains the user's information encoded in this friend's rotation encryption
+     */
+    fun createRotationMessage(user: User) : Rotation {
+        val subscription = user.invitationInfo.invoke()!!
+
+        val cliqueKey = SecureDatabase.instance!!.keyDao().findKey(subscription.feedReadKey)!!
+
+        return Rotation(
+                CliqueConfig.encodedStringToByteArray(cliqueKey.key, user.symCipher.invoke(Cipher.DECRYPT_MODE)!!),
+                CliqueConfig.encodedStringToString(cliqueKey.cipher, user.symCipher.invoke(Cipher.DECRYPT_MODE)!!),
+                CliqueConfig.encodedStringToString(subscription.subscription, user.symCipher.invoke(Cipher.DECRYPT_MODE)!!)
+        ).encrypt(rotCipher)
+    }
+
+    /**
+     * Reads a Rotation in for this Friend and applies the new values to their account for the given
+     * User.
+     * @param user this User associated with this Friend
+     * @param rotation the Rotation being sent for this Friend's account.
+     */
+    fun readRotationMessage(user: User, rotation: Rotation) {
+        val transcode = fun(value: String) : String {
+            return CliqueConfig.transcodeString(value, rotCipher.invoke(Cipher.DECRYPT_MODE)!!, user.symCipher.invoke(Cipher.ENCRYPT_MODE)!!)
+        }
+
+        val newKey = rotation.encodedKey?.let { transcode(it) }
+        val newCipher = rotation.cipher?.let { transcode(it) }
+        val newUrl = rotation.cipher?.let { transcode(it) }
+
+        toAccount(this, user.symCipher)?.also { subscription ->
+            newUrl?.also { url -> subscription.url = url }
+
+            val subKey = SecureDatabase.instance?.keyDao()?.findKey(subscription.key1)?.also { key ->
+                newKey?.also { key.key = it }
+                newCipher?.also { key.cipher = it }
+            }
+
+            subKey?.also { SecureDatabase.instance?.keyDao()?.updateKey(it) }
+            SecureDatabase.instance?.accountDao()?.updateAccounts(subscription)
+        }
     }
 
     companion object {
@@ -282,6 +341,16 @@ class Friend private constructor(val displayName: String, val url: String, priva
                     }
             )
         }
+
+        /**
+         * @param friend the Friend whose CliqueAccount you want
+         * @param symCipher the cipher function to use to decrypt the CliqueAccount
+         */
+        internal fun toAccount(friend: Friend, symCipher: (Int) -> Cipher?): CliqueAccount? {
+            return SecureDatabase.instance?.accountDao()?.findAccountByDisplayName(
+                    CliqueConfig.stringToEncodedString(friend.displayName, symCipher.invoke(Cipher.ENCRYPT_MODE)!!)
+            )
+        }
     }
 }
 
@@ -291,6 +360,38 @@ class Friend private constructor(val displayName: String, val url: String, priva
  * @param rotate a function that takes a new clique key name, a new url (both encoded), and a (this) Rotation and generates rotation information
  * for the given user, placing it into this Rotation.
  */
+class Rotation(newKey: ByteArray? = null, newCipher: String? = null, newUrl: String? = null) {
+    private var _encrypted = false
+    val encrypted: Boolean
+        get() = _encrypted
+
+    private var _key = newKey
+    var encodedKey: String? = null
+    val key: ByteArray?
+        get() = _key
+    private var _cipher = newCipher
+    val cipher: String?
+        get() = _cipher
+    private var _url = newUrl
+    val url: String?
+        get() = _url
+
+    fun encrypt(encrypt: (Int) -> Cipher?): Rotation {
+        if(!encrypted) {
+            key?.also {
+                encodedKey = CliqueConfig.byteArrayToEncodedString(it, encrypt.invoke(Cipher.ENCRYPT_MODE)!!)
+            }
+            cipher?.also {
+                _cipher = CliqueConfig.stringToEncodedString(it, encrypt.invoke(Cipher.ENCRYPT_MODE)!!)
+            }
+            url?.also {
+                _url = CliqueConfig.stringToEncodedString(it, encrypt.invoke(Cipher.ENCRYPT_MODE)!!)
+            }
+            _encrypted = true
+        }
+        return this
+    }
+}
 //class Rotation private constructor(val name: String, private val rotate: (String, String, Rotation) -> Unit) {
 //
 //    private var _key: String? = null
@@ -329,7 +430,7 @@ class Friend private constructor(val displayName: String, val url: String, priva
 //                            CliqueConfig.transcodeString(
 //                                    value,
 //                                    symCipher.invoke(Cipher.DECRYPT_MODE)!!,
-//                                    cliqueKeyToAsymPrivateCipher(description.rotateKey, Cipher.ENCRYPT_MODE, symCipher)!!
+//                                    cliqueKeyToSymCipher(description.rotateKey, Cipher.ENCRYPT_MODE, symCipher)!!
 //                            )
 //
 //                    rotation._cipher = transcode(newKey.cipher)

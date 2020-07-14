@@ -22,9 +22,6 @@ object CliqueTestHelper {
                 return null
             }
 
-    fun getOnlySupportedECDHAlgo() : SymmetricEncryption =
-            EncryptionBuilder.symmetric().algorithm(AlgorithmDesc.toAlgorithm("TlsPremasterSecret")).build() as SymmetricEncryption
-
     fun switchCliqueConfigForJDK() {
         CliqueConfig.setStringEncoder { array:ByteArray, _:Int  ->
             Base64.getEncoder().encodeToString(array)

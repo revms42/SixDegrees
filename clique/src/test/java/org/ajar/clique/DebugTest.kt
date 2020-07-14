@@ -11,5 +11,6 @@ class DebugTest {
     @Test
     fun runDebugTest() {
         AlgorithmDesc.establishSupportedEncryption()
+
     }
 }

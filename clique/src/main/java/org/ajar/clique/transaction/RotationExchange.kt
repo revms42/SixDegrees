@@ -1,6 +1,7 @@
 package org.ajar.clique.transaction
 
 import org.ajar.clique.CliqueConfig
+import org.ajar.clique.database.CliqueSubscription
 import org.ajar.clique.database.SecureDatabase
 import org.ajar.clique.encryption.AsymmetricEncryption
 import org.ajar.clique.facade.Friend
@@ -40,50 +41,46 @@ class RotationExchange private constructor(private val user: User) {
     /**
      * Here we should first remove the associated friends and their keys.
      *
-     * Then, for the remaining friends, we should iterate through and for each friend we
-     * create a rotation message with the url, private key for the new encryption, and encrypt
-     * it all with each friend's rotation encryption public key.
-     *
      * Then we should update our own key for publication (our saved write - public - key).
      *
-     * With all that completed we should output a list of rotation encryption messages ready to
-     * publish to the old URL (which we should publish).
+     * With all that completed we should output a bundle of data with the old publishing info.
      *
-     * @return a bunch of rotation encryption messages in an object that you should call the cleanUp method on.
+     * @return a the old publishing info.
      */
 
-    fun finalizeExchange(): RotationPublicationBatch? {
+    fun finalizeExchange(): RotationPublishData? {
         val toRemove = removedFriends.mapNotNull { exFriend ->
-            val name = CliqueConfig.stringToEncodedString(exFriend.displayName, user.symCipher.invoke(Cipher.ENCRYPT_MODE)!!)
-            SecureDatabase.instance?.accountDao()?.findAccountByDisplayName(name)
+            Friend.toAccount(exFriend, user.symCipher)
         }
         return SecureDatabase.instance?.accountDao()?.let { accountDao ->
             accountDao.deleteAccounts(*toRemove.toTypedArray())
 
-            val encryptedName = CliqueConfig.stringToEncodedString(user.name, user.symCipher.invoke(Cipher.ENCRYPT_MODE)!!)
-            val userAccount = SecureDatabase.instance!!.accountDao().findAccount(encryptedName)
+            val oldData = RotationPublishData(user.invitationInfo.invoke()!!)
 
-            var userFeedRead = userAccount!!.key2
-            var userFeedWrite = userAccount.key1
-            var userUrl = userAccount.url
+            val userAccount = user.getAccount()
 
-            if(asymDesc != null) {
-                val encode = fun(): Cipher {
-                    return user.symCipher.invoke(Cipher.ENCRYPT_MODE)!!
+            userAccount?.let { account ->
+                if(asymDesc != null) {
+                    val encode = fun(): Cipher {
+                        return user.symCipher.invoke(Cipher.ENCRYPT_MODE)!!
+                    }
+                    val keyPair = User.generateUserFeedKeys(user.name, asymDesc!!, encode)
+
+                    SecureDatabase.instance!!.keyDao().addKey(keyPair.feedPublicKey)
+                    SecureDatabase.instance!!.keyDao().addKey(keyPair.feedPrivateKey)
+
+                    account.key2 = keyPair.feedPrivate
+                    account.key1 = keyPair.feedPublic
                 }
-                val keyPair = User.generateUserFeedKeys(user.name, asymDesc!!, encode)
 
-                SecureDatabase.instance!!.keyDao().addKey(keyPair.feedPublicKey)
-                SecureDatabase.instance!!.keyDao().addKey(keyPair.feedPrivateKey)
+                if(url != null) {
+                    account.url = CliqueConfig.stringToEncodedString(url!!, user.symCipher.invoke(Cipher.ENCRYPT_MODE)!!)
+                }
 
-                userFeedRead = keyPair.feedPrivate
-                userFeedWrite = keyPair.feedPublic
+                accountDao.updateAccounts(account)
+
+                oldData
             }
-
-            if(url != null) {
-                userUrl = CliqueConfig.stringToEncodedString(url!!, user.symCipher.invoke(Cipher.ENCRYPT_MODE)!!)
-            }
-            TODO("NYI!")
         }
     }
 
@@ -94,11 +91,17 @@ class RotationExchange private constructor(private val user: User) {
     }
 }
 
-data class RotationPublicationBatch(val oldUrl: String, val oldPublishKey: String, val oldReadKey: String, val messages: List<Friend>?) {
+data class RotationPublishData(private val subscription: CliqueSubscription) {
 
+    val oldUrl: String = subscription.subscription
+    val oldPublishKey: String = subscription.rotateKey
+
+    /**
+     * When you're done publishing the rotation messages to this url, make sure you clean up.
+     */
     fun cleanUp() {
-        deleteKey(oldPublishKey)
-        deleteKey(oldReadKey)
+        deleteKey(subscription.feedReadKey)
+        deleteKey(subscription.rotateKey)
     }
 
     private fun deleteKey(name: String) {

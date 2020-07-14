@@ -96,7 +96,7 @@ class FriendFacadeTest {
                 friendRotateProvider.cipher(Cipher.ENCRYPT_MODE, rotateSecretKey)
         )
 
-        assertEquals(FRIEND_ROTATE, friend.decryptRotation(encryptedRotate))
+        assertEquals(FRIEND_ROTATE, friend.decryptStringRotation(encryptedRotate))
     }
 
     companion object {

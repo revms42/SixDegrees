@@ -294,7 +294,7 @@ class SubscriptionExchangeTest {
             capturedRotateWriteKey = CliqueConfig.byteArrayToEncodedString(keyPair.private.encoded, exchangeCipher.invoke(Cipher.ENCRYPT_MODE))
         }
 
-        val sharedSecretExchange = SharedSecretBuilder.create().build(CliqueTestHelper.getOnlySupportedECDHAlgo())
+        val sharedSecretExchange = SharedSecretBuilder.create().build(SymmetricEncryptionDesc.DEFAULT)
         val secretExchangeWrapper = SharedSecretExchangeWrapper(sharedSecretExchange!!, captureRotationKeyPair)
 
         val invitation = exchange.createInvitation(FRIEND_ONE_DISPLAY_NAME, secretExchangeWrapper)
@@ -424,7 +424,7 @@ class SubscriptionExchangeTest {
         // First, do what we did above to create a mock response to the invitation (request)
         val invitation = Mockito.mock(Invitation::class.java)
 
-        val sharedSecretExchange = SharedSecretBuilder.create().build(CliqueTestHelper.getOnlySupportedECDHAlgo())
+        val sharedSecretExchange = SharedSecretBuilder.create().build(SymmetricEncryptionDesc.DEFAULT)
 
         val keyPair = sharedSecretExchange!!.generateKeyPair()
         val rotateKey = CliqueConfig.byteArrayToEncodedString(keyPair.private.encoded, exchangeCipher.invoke(Cipher.ENCRYPT_MODE))
