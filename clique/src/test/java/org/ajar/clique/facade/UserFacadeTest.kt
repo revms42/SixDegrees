@@ -170,8 +170,9 @@ class UserFacadeTest {
         val encryptedUrl = encryptedSym(FRIEND_ONE_URL)
         val encryptedKey = encryptedSym(FRIEND_ONE_READ_KEY)
         val encryptedRotate = encryptedSym(FRIEND_ONE_ROTATE_KEY)
+        val encryptedVerify = encryptedSym(FRIEND_ONE_VERIFY_KEY)
 
-        val friendSubscription = CliqueSubscription(encryptedDisplayName, encryptedUrl, encryptedKey, encryptedRotate)
+        val friendSubscription = CliqueSubscription(encryptedDisplayName, encryptedUrl, encryptedKey, encryptedRotate, encryptedVerify)
 
         // The friends should have their information encrypted with the user's sym encryption.
         Friend.fromSubscription(friendSubscription) {
@@ -184,6 +185,7 @@ class UserFacadeTest {
                 user!!.filter,
                 encryptedRotate,
                 encryptedKey,
+                encryptedVerify,
                 "Invalid Key",
                 "Probably Should Match",
                 encryptedUrl
@@ -203,6 +205,7 @@ class UserFacadeTest {
         Assert.assertEquals("User's friend's url does not match expected!", FRIEND_ONE_URL, decryptedSym(friends.value?.get(friendIndex)?.subscription!!))
         Assert.assertEquals("User's friend's read key does not match expected!", FRIEND_ONE_READ_KEY, decryptedSym(friends.value?.get(friendIndex)?.feedReadKey!!))
         Assert.assertEquals("User's friend's rotate key does not match expected!", FRIEND_ONE_ROTATE_KEY, decryptedSym(friends.value?.get(friendIndex)?.rotateKey!!))
+        Assert.assertEquals("User's friend's verify key does not match expected!", FRIEND_ONE_VERIFY_KEY, decryptedSym(friends.value?.get(friendIndex)?.verifyKey!!))
     }
 
     companion object {
@@ -213,6 +216,7 @@ class UserFacadeTest {
 
         const val FRIEND_ONE_READ_KEY = "MockFriendOneReadKey"
         const val FRIEND_ONE_ROTATE_KEY = "MockFriendOneRotateKey"
+        const val FRIEND_ONE_VERIFY_KEY = "MockFriendOneVerifyKey"
         const val FRIEND_ONE_DISPLAY_NAME = "Mock Friend One"
         const val FRIEND_ONE_URL = "https://mockstorage.net/friend1"
     }

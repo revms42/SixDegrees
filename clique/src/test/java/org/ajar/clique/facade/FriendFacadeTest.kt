@@ -73,7 +73,7 @@ class FriendFacadeTest {
 
         SecureDatabase.instance!!.keyDao().addKey(rotateKey)
 
-        val subscription = CliqueSubscription(FRIEND_DISPLAY_NAME, FRIEND_URL, "", "")
+        val subscription = CliqueSubscription(FRIEND_DISPLAY_NAME, FRIEND_URL, "", "", "")
         subscription.subscriber = CliqueConfig.stringToEncodedString(FRIEND_DISPLAY_NAME, cipher(Cipher.ENCRYPT_MODE)!!)
         subscription.feedReadKey = CliqueConfig.stringToEncodedString("$FRIEND_DISPLAY_NAME:key2", cipher.invoke(Cipher.ENCRYPT_MODE)!!)
         subscription.rotateKey = CliqueConfig.stringToEncodedString("$FRIEND_DISPLAY_NAME:key1", cipher.invoke(Cipher.ENCRYPT_MODE)!!)

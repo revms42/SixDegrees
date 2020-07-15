@@ -29,7 +29,10 @@ interface CliqueAccountDAO {
     @Query("SELECT ${CliqueAccount.COLUMN_KEY_1} FROM ${CliqueAccount.TABLE_NAME} WHERE ${CliqueAccount.COLUMN_USER} = :user LIMIT 1")
     fun findPublishKey(user: String): String?
 
-    @Query("SELECT ${CliqueAccount.COLUMN_DISPLAY_NAME}, ${CliqueAccount.COLUMN_URL}, ${CliqueAccount.COLUMN_KEY_2} FROM ${CliqueAccount.TABLE_NAME} WHERE ${CliqueAccount.COLUMN_USER} = :user LIMIT 1")
+    @Query("SELECT ${CliqueAccount.COLUMN_KEY_3} FROM ${CliqueAccount.TABLE_NAME} WHERE ${CliqueAccount.COLUMN_USER} = :user LIMIT 1")
+    fun findSignatureKey(user: String): String?
+
+    @Query("SELECT ${CliqueAccount.COLUMN_DISPLAY_NAME}, ${CliqueAccount.COLUMN_URL}, ${CliqueAccount.COLUMN_KEY_2}, ${CliqueAccount.COLUMN_KEY_1}, ${CliqueAccount.COLUMN_KEY_3} FROM ${CliqueAccount.TABLE_NAME} WHERE ${CliqueAccount.COLUMN_USER} = :user LIMIT 1")
     fun findFriendRequestInfo(user: String): CliqueSubscription?
 
     @Query("SELECT ${CliqueAccount.COLUMN_URL} FROM ${CliqueAccount.TABLE_NAME} WHERE ${CliqueAccount.COLUMN_USER} = :user LIMIT 1")
@@ -38,10 +41,10 @@ interface CliqueAccountDAO {
     @Query("SELECT ${CliqueAccount.COLUMN_FILTER} FROM ${CliqueAccount.TABLE_NAME} WHERE ${CliqueAccount.COLUMN_USER} = :user LIMIT 1")
     fun findFilterForUser(user: String): String?
 
-    @Query("SELECT ${CliqueAccount.COLUMN_DISPLAY_NAME}, ${CliqueAccount.COLUMN_URL}, ${CliqueAccount.COLUMN_KEY_2} FROM ${CliqueAccount.TABLE_NAME} WHERE ${CliqueAccount.COLUMN_FILTER} = :filter")
+    @Query("SELECT ${CliqueAccount.COLUMN_DISPLAY_NAME}, ${CliqueAccount.COLUMN_URL}, ${CliqueAccount.COLUMN_KEY_2}, ${CliqueAccount.COLUMN_KEY_1}, ${CliqueAccount.COLUMN_KEY_3} FROM ${CliqueAccount.TABLE_NAME} WHERE ${CliqueAccount.COLUMN_FILTER} = :filter")
     fun observeSubscriptionKeys(filter: String): LiveData<List<CliqueSubscription>?>
 
-    @Query("SELECT ${CliqueAccount.COLUMN_DISPLAY_NAME}, ${CliqueAccount.COLUMN_URL}, ${CliqueAccount.COLUMN_KEY_2} FROM ${CliqueAccount.TABLE_NAME} WHERE ${CliqueAccount.COLUMN_FILTER} = :filter")
+    @Query("SELECT ${CliqueAccount.COLUMN_DISPLAY_NAME}, ${CliqueAccount.COLUMN_URL}, ${CliqueAccount.COLUMN_KEY_2}, ${CliqueAccount.COLUMN_KEY_1}, ${CliqueAccount.COLUMN_KEY_3} FROM ${CliqueAccount.TABLE_NAME} WHERE ${CliqueAccount.COLUMN_FILTER} = :filter")
     fun findSubscriptionKeys(filter: String): List<CliqueSubscription>?
 
     @Query("SELECT * FROM ${CliqueAccount.TABLE_NAME} WHERE ${CliqueAccount.COLUMN_DISPLAY_NAME} = :displayName LIMIT 1")

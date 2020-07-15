@@ -37,12 +37,12 @@ data class CliqueKey(
  * User
  * - Write Key: Asym Public - COLUMN_KEY_1
  * - Read Key: Asym Private - COLUMN_KEY_2
- * - Garbage Key: Asym Private - COLUMN_KEY_3
+ * - Signing Key: Asym Private - COLUMN_KEY_3
  *
  * Subscription
- * - Rotate Write Key (Rotate Message to Subscriber): Asym Public - COLUMN_KEY_1
+ * - Rotate Key: Sym Shared Secret - COLUMN_KEY_1
  * - Read Key: Asym Private - COLUMN_KEY_2
- * - Rotate Read Key (Rotate Message from Subscription): Asym Private - COLUMN_KEY_3
+ * - Signing Key: Asym Public - COLUMN_KEY_3
  */
 @Entity(tableName = CliqueAccount.TABLE_NAME)
 data class CliqueAccount(
@@ -51,6 +51,7 @@ data class CliqueAccount(
         @ColumnInfo(name = COLUMN_FILTER) var filter: String, // User Account Name, sym encoded
         @ColumnInfo(name = COLUMN_KEY_1) var key1: String, // CliqueKey name sym encoded
         @ColumnInfo(name = COLUMN_KEY_2) var key2: String, // CliqueKey name sym encoded
+        @ColumnInfo(name = COLUMN_KEY_3) var key3: String, // CliqueKey name sym encoded
         @ColumnInfo(name = COLUMN_SYMMETRIC) var sym: String, // Symmetric Key, RSA encoded
         @ColumnInfo(name = COLUMN_SYMMETRIC_ALGO) var algo: String, // Symmetric Key, RSA encoded
         @ColumnInfo(name = COLUMN_URL) var url: String // URL, sym encoded
@@ -88,23 +89,30 @@ data class CliqueAccount(
         const val COLUMN_KEY_2 = "fifth" // Encrypted using the sym of a given User account
 
         /**
+         * In a User this is a name prefix for two keys (one private, one public) that are used to verify a message
+         * In a Subscription this is a public key used to verify signed messages.
+         * This is the second part of a friend message
+         */
+        const val COLUMN_KEY_3 = "sixth" // Encrypted using the sym of a given User account
+
+        /**
          * In a User this is the symmetric key used to encode other keys.
          * In a Subscription this points to the User's symmetric key.
          */
-        const val COLUMN_SYMMETRIC = "sixth" // Encrypted using the keychain RSA
+        const val COLUMN_SYMMETRIC = "seventh" // Encrypted using the keychain RSA
 
         /**
          * In a User this is the symmetric key algorithm used to generate a cipher with the symmetric key
          * In a Subscription this is the User's symmetric encryption algorithm.
          */
-        const val COLUMN_SYMMETRIC_ALGO = "seventh" // Encrypted using the keychain RSA
+        const val COLUMN_SYMMETRIC_ALGO = "eighth" // Encrypted using the keychain RSA
 
         /**
          * In a User this is the url you'll publish to
          * In a Subscriber this is the url you'll read from
          * This is the third part of a friend message.
          */
-        const val COLUMN_URL = "eighth" // Encrypted using the sym of a given User account
+        const val COLUMN_URL = "nineth" // Encrypted using the sym of a given User account
     }
 }
 
@@ -117,5 +125,6 @@ data class CliqueSubscription (
         @ColumnInfo(name = CliqueAccount.COLUMN_DISPLAY_NAME) var subscriber: String, // Subscriber account name sym encoded
         @ColumnInfo(name = CliqueAccount.COLUMN_URL) var subscription: String, // Subscription url, sym encoded
         @ColumnInfo(name = CliqueAccount.COLUMN_KEY_2) var feedReadKey: String, // CliqueKey name sym encoded
-        @ColumnInfo(name = CliqueAccount.COLUMN_KEY_1) var rotateKey: String // CliqueKey name sym encoded
+        @ColumnInfo(name = CliqueAccount.COLUMN_KEY_1) var rotateKey: String, // CliqueKey name sym encoded
+        @ColumnInfo(name = CliqueAccount.COLUMN_KEY_3) var verifyKey: String // CliqueKey name sym encoded
 )

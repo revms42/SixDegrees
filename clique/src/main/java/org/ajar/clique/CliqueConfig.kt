@@ -46,6 +46,24 @@ object CliqueConfig {
     fun encodedStringToString(encodedString: String, cipher: Cipher): String =
             String(encodedStringToByteArray(encodedString, cipher), Charsets.UTF_8)
 
+    fun signatureForString(string: String, privateKey: PrivateKey, asymDesc: AsymmetricEncryption): String {
+        val signature = Signature.getInstance(asymDesc.algorithm, asymDesc.factory)
+        signature.initSign(privateKey)
+        signature.update(string.toByteArray(Charsets.UTF_8))
+
+        val signed = signature.sign()
+
+        return encodeToString(signed, Base64.NO_WRAP)
+    }
+
+    fun verifySignature(string: String, sign: String, publicKey: PublicKey, asymDesc: AsymmetricEncryption): Boolean {
+        val signature = Signature.getInstance(asymDesc.algorithm, asymDesc.factory)
+        signature.initVerify(publicKey)
+        signature.update(string.toByteArray(Charsets.UTF_8))
+
+        return signature.verify(decodeToByteArray(sign, Base64.NO_WRAP))
+    }
+
     internal fun loadKeyStore(loadParams: KeyStore.LoadStoreParameter? = null) {
        val keyStore = KeyStore.getInstance(keyStoreType, provider)
 

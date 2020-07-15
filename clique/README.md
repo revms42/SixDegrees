@@ -50,10 +50,13 @@ an asymmetric private key corresponding to the public key above.
 - Rotation Key: The key used when encryption is rotated. This is a shared secret key that is created
 during a subscription event and is used between a publisher and a subscriber to change the reading key
 or url associated with a feed.
+- Verification Key: The key used to ensure message integrity. This is a signing key that is handed out
+to a subscriber (the public part) to verify the the message being sent is actually from the correct
+account.
 
 ## Message Structure
 All messages
-(encrypted checksum x 1 32 bit byte)(Timestamp x 1 64 bit byte)(remaining message)
+(unencrypted signature)(Timestamp x 1 64 bit byte)(remaining message)
 
 Feed Messages Header - Publish Encrypted
 (Feed Message ID x 1 32 bit byte)(Symmetric Cipher Desc)(Symmetric Key)

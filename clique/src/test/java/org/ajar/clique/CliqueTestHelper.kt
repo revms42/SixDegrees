@@ -69,7 +69,7 @@ class AsymetricEncryptionWrapper(private val wrapped: AsymmetricEncryption,
     override val padding: String = wrapped.padding
     override var createKeyGenSpec: (name: String, purpose: Int) -> AlgorithmParameterSpec? = wrapped.createKeyGenSpec
 
-    override fun generateKeyPair(name: String, keyStore: String?): KeyPair {
+    override fun generateKeyPair(name: String, keyStore: String?, purpose: Int): KeyPair {
         return wrapped.generateKeyPair(name, keyStore).also { setKeyPair?.invoke(it) }
     }
 

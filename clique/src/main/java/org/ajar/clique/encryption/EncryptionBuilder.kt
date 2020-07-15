@@ -11,7 +11,8 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.SecretKeySpec
 
-private const val ENCRYPTION_PURPOSE = KeyProperties.PURPOSE_DECRYPT or KeyProperties.PURPOSE_ENCRYPT
+const val ENCRYPTION_PURPOSE = KeyProperties.PURPOSE_DECRYPT or KeyProperties.PURPOSE_ENCRYPT
+const val VERIFICATION_PURPOSE = KeyProperties.PURPOSE_SIGN or KeyProperties.PURPOSE_VERIFY
 
 interface Encryption {
     val algorithm: String
@@ -69,7 +70,7 @@ interface AsymmetricEncryption : Encryption {
     val signaturePadding: String
     val factory: String
 
-    fun generateKeyPair(name: String = "", keyStore: String? = null): KeyPair
+    fun generateKeyPair(name: String = "", keyStore: String? = null, purpose: Int = ENCRYPTION_PURPOSE): KeyPair
     fun privateKeyFromBytes(keyBytes: ByteArray): PrivateKey
     fun publicKeyFromBytes(keyBytes: ByteArray): PublicKey
 }
@@ -199,7 +200,7 @@ data class AsymmetricEncryptionDesc(
             return builder.build()
         }
 
-    override fun generateKeyPair(name: String, keyStore: String?): KeyPair {
+    override fun generateKeyPair(name: String, keyStore: String?, purpose: Int): KeyPair {
         val keyPairGenerator = if(keyStore == null) {
             createKeyPairGenerator.invoke(algorithm, Encryption.resolverProvider(keyGenerator))
         } else {
@@ -207,7 +208,7 @@ data class AsymmetricEncryptionDesc(
             createKeyPairGenerator.invoke(algorithm, Encryption.resolverProvider(keyStore))
         }
 
-        keyPairGenerator.initialize(createKeyGenSpec(name, ENCRYPTION_PURPOSE))
+        keyPairGenerator.initialize(createKeyGenSpec(name, purpose))
 
         requireAuthentication = false
         return keyPairGenerator.generateKeyPair()

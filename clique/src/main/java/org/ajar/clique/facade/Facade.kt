@@ -9,6 +9,8 @@ import org.ajar.clique.encryption.*
 import org.ajar.clique.transaction.SubscriptionExchange
 import java.security.InvalidKeyException
 import java.security.KeyStore
+import java.security.PrivateKey
+import java.security.Signature
 import javax.crypto.Cipher
 
 private fun symDescToCipher(name: String, mode: Int, userConfigCipher: (Int) -> Cipher): Cipher? {
@@ -39,6 +41,20 @@ private fun cliqueKeyToAsymPrivateCipher(name: String, mode: Int, symCipher: (In
     }
 }
 
+private fun cliqueKeyToAsymPublicCipher(name: String, mode: Int, symCipher: (Int) -> Cipher?): Cipher? {
+    return SecureDatabase.instance?.keyDao()?.findKey(name)?.let {
+        val desc = AsymmetricEncryptionDesc.fromString(
+                CliqueConfig.encodedStringToString(it.cipher, symCipher.invoke(Cipher.DECRYPT_MODE)!!)
+        )
+        CipherProvider.Public(desc).cipher(
+                mode,
+                desc.publicKeyFromBytes(
+                        CliqueConfig.encodedStringToByteArray(it.key, symCipher.invoke(Cipher.DECRYPT_MODE)!!)
+                )
+        )
+    }
+}
+
 private fun cliqueKeyToSymCipher(name: String, mode: Int, symCipher: (Int) -> Cipher?) : Cipher? {
     return SecureDatabase.instance?.keyDao()?.findKey(name)?.let {
         val desc = SymmetricEncryptionDesc.fromString(
@@ -53,13 +69,51 @@ private fun cliqueKeyToSymCipher(name: String, mode: Int, symCipher: (Int) -> Ci
     }
 }
 
-private fun writeFeedMessage(name: String, message: String, symCipher: (Int) -> Cipher?): String? {
-    return SecureDatabase.instance?.accountDao()?.findPublishKey(name)?.let {
+private fun writeFeedMessage(userName: String, message: String, symCipher: (Int) -> Cipher?): String? {
+    return SecureDatabase.instance?.accountDao()?.findPublishKey(userName)?.let {
         return CliqueConfig.stringToEncodedString(message,
-                cliqueKeyToAsymPrivateCipher(it, Cipher.ENCRYPT_MODE, symCipher)!!
+                cliqueKeyToAsymPublicCipher(it, Cipher.ENCRYPT_MODE, symCipher)!!
         )
     }
 }
+
+private fun signEncodedMessage(userName: String, message: String, symCipher: (Int) -> Cipher?): String? {
+    return SecureDatabase.instance?.accountDao()?.findSignatureKey(userName)?.let { keyRoot ->
+        val root = CliqueConfig.encodedStringToString(keyRoot, symCipher.invoke(Cipher.DECRYPT_MODE)!!)
+        val keyName = sigRootToSigningKeyName(root)
+
+        return SecureDatabase.instance?.keyDao()?.findKey(keyName)?.let { cliqueKey ->
+            val desc = AsymmetricEncryptionDesc.fromString(
+                    CliqueConfig.encodedStringToString(cliqueKey.cipher, symCipher.invoke(Cipher.DECRYPT_MODE)!!)
+            )
+
+            val privateKey = desc.privateKeyFromBytes(
+                    CliqueConfig.encodedStringToByteArray(cliqueKey.key, symCipher.invoke(Cipher.DECRYPT_MODE)!!)
+            )
+
+             CliqueConfig.signatureForString(message, privateKey, desc)
+        }
+    }
+}
+
+private fun verifyEncodedMessage(keyName: String, message: String, signature: String, symCipher: (Int) -> Cipher?): Boolean? {
+    return SecureDatabase.instance?.keyDao()?.findKey(keyName)?.let { cliqueKey ->
+        val desc = AsymmetricEncryptionDesc.fromString(
+                CliqueConfig.encodedStringToString(cliqueKey.cipher, symCipher.invoke(Cipher.DECRYPT_MODE)!!)
+        )
+
+        val publicKey = desc.publicKeyFromBytes(
+                CliqueConfig.encodedStringToByteArray(cliqueKey.key, symCipher.invoke(Cipher.DECRYPT_MODE)!!)
+        )
+
+        CliqueConfig.verifySignature(message, signature, publicKey, desc)
+    }
+}
+
+internal fun userNameToSigningKeyName(userName: String): String = sigRootToSigningKeyName("$userName:sig")
+internal fun sigRootToSigningKeyName(sigRoot: String): String = "$sigRoot(private)"
+internal fun userNameToVerifyKeyName(userName: String): String = sigRootToVerifyKeyName("$userName:sig")
+internal fun sigRootToVerifyKeyName(sigRoot: String): String = "$sigRoot(public)"
 
 /**
  * Representation of the user of the current account.
@@ -69,6 +123,9 @@ private fun writeFeedMessage(name: String, message: String, symCipher: (Int) -> 
  * @param invitationInfo a CliqueSubscription which represents a portion of the information needed to create an invitation.
  * @param symCipher a function that will initialize a cipher to encrypt or decrypt the user's symmetric key encryption.
  * @param feed a function that encrypts the given plain-text into a string using this user's asymmetric publish key.
+ * @param sign a function that produces a signature for a given message input.
+ * @param androidKeyStoreUserCipher a function that generates a cipher using the user's specified android key store key
+ * @param accountName the encrypted name of this user account (in the database)
  */
 class User private constructor(
         val name: String,
@@ -77,10 +134,16 @@ class User private constructor(
         internal val invitationInfo: () -> CliqueSubscription?,
         internal val symCipher: (Int) -> Cipher?,
         private val feed: (value: String) -> String?,
+        private val sign: (value: String) -> String?,
         private val androidKeyStoreUserCipher: (Int) -> Cipher?,
         private val accountName: String
 ){
     fun writeFeedMessage(message: String): String? = feed(message)
+
+    fun signMessage(message: String): String? = sign(message)
+
+    val verifyKeyName: String
+        get() = CliqueConfig.stringToEncodedString(userNameToVerifyKeyName(name), symCipher(Cipher.ENCRYPT_MODE)!!)
 
     private var _friends: LiveData<List<Friend>?>? = null
     val friends : LiveData<List<Friend>?>?
@@ -108,10 +171,12 @@ class User private constructor(
 
         val rotateKey = appendTo("key1")
         val feedReadKey = appendTo("key2")
+        val verifyKey = appendTo("key3")
 
         //TODO("Make this work with the new friend info")
         SecureDatabase.instance?.keyDao()?.addKey(CliqueKey(rotateKey, friendInfo.rotateKey, friendInfo.rotateKeyAlgo))
         SecureDatabase.instance?.keyDao()?.addKey(CliqueKey(feedReadKey, friendInfo.friendReadKey, friendInfo.friendReadAlgo))
+        SecureDatabase.instance?.keyDao()?.addKey(CliqueKey(verifyKey, friendInfo.friendSignKey, friendInfo.friendReadAlgo))
 
         val dbName = CliqueConfig.stringToEncodedString(friendName, androidKeyStoreUserCipher.invoke(Cipher.ENCRYPT_MODE)!!)
 
@@ -123,6 +188,7 @@ class User private constructor(
                 filter,
                 rotateKey,
                 feedReadKey,
+                verifyKey,
                 symKey!!.symKey,
                 symKey.symAlgo,
                 friendInfo.url
@@ -144,6 +210,9 @@ class User private constructor(
 
                     val feedWriter = fun(value: String): String? { return writeFeedMessage(encodedName, value, symCipher) }
 
+                    val signingKey = CliqueConfig.stringToEncodedString(userNameToSigningKeyName(user), symCipher.invoke(Cipher.ENCRYPT_MODE)!!)
+                    val signer = fun(value: String): String? { return signEncodedMessage(signingKey, value, symCipher) }
+
                     val friendRequestInfo = fun(): CliqueSubscription? { return SecureDatabase.instance?.accountDao()?.findFriendRequestInfo(encodedName) }
 
                     val filter = SecureDatabase.instance?.accountDao()?.findFilterForUser(encodedName)!!
@@ -157,6 +226,7 @@ class User private constructor(
                             friendRequestInfo,
                             symCipher,
                             feedWriter,
+                            signer,
                             configCipher,
                             encodedName
                     )
@@ -180,6 +250,7 @@ class User private constructor(
 
             CliqueConfig.tableNameEncryption.generateSecretKey(user).also { userKey ->
                 CliqueConfig.getKeyStore()?.setEntry(user, KeyStore.SecretKeyEntry(userKey), KeyStore.PasswordProtection(password.toCharArray()))
+
                 val encryptUserKey = fun (): Cipher { return CipherProvider.Symmetric(CliqueConfig.tableNameEncryption).cipher(Cipher.ENCRYPT_MODE, userKey) }
 
                 val encodedUser = CliqueConfig.stringToEncodedString(user, encryptUserKey.invoke())
@@ -198,18 +269,28 @@ class User private constructor(
                 val encUrl = CliqueConfig.stringToEncodedString(url, encryptSymKey.invoke())
 
                 val feedKeyPair = generateUserFeedKeys(user, encryption, encryptSymKey)
-                val feedPublic = feedKeyPair.feedPublic
-                val feedPublicKey = feedKeyPair.feedPublicKey
-                val feedPrivate = feedKeyPair.feedPrivate
-                val feedPrivateKey = feedKeyPair.feedPrivateKey
+
+                val sigKeyPair = generateUserSigningKeys(user, encryption, encryptSymKey)
 
                 if(SecureDatabase.instance == null) SecureDatabase.init(context, CliqueConfig.dbName)
 
-                val cliqueAccount = CliqueAccount(encodedUser, encDisplayName, filter, feedPublic, feedPrivate, encryptSym, encryptSymAlgo, encUrl)
+                val cliqueAccount = CliqueAccount(
+                        encodedUser,
+                        encDisplayName,
+                        filter,
+                        feedKeyPair.feedPublic,
+                        feedKeyPair.feedPrivate,
+                        sigKeyPair.sigRoot,
+                        encryptSym,
+                        encryptSymAlgo,
+                        encUrl
+                )
                 SecureDatabase.instance!!.accountDao().addAccount(cliqueAccount)
 
-                SecureDatabase.instance!!.keyDao().addKey(feedPublicKey)
-                SecureDatabase.instance!!.keyDao().addKey(feedPrivateKey)
+                SecureDatabase.instance!!.keyDao().addKey(feedKeyPair.feedPublicKey)
+                SecureDatabase.instance!!.keyDao().addKey(feedKeyPair.feedPrivateKey)
+                SecureDatabase.instance!!.keyDao().addKey(sigKeyPair.sigPublicKey)
+                SecureDatabase.instance!!.keyDao().addKey(sigKeyPair.sigPrivateKey)
             }
         }
 
@@ -229,10 +310,30 @@ class User private constructor(
 
             return FeedKeyPair(feedPublic, feedPublicKey, feedPrivate, feedPrivateKey)
         }
+
+        private fun generateUserSigningKeys(user: String, encryption: AsymmetricEncryption, encryptSymKey: () -> Cipher): SigKeyPair {
+            val encryptionOne = "$user:sig"
+            val encryptOnePair = encryption.generateKeyPair(encryptionOne, purpose = VERIFICATION_PURPOSE)
+
+            val algoDescEncrypted = CliqueConfig.stringToEncodedString(encryption.toString(), encryptSymKey.invoke())
+
+            val encryptOnePublic = CliqueConfig.byteArrayToEncodedString(encryptOnePair.public.encoded, encryptSymKey.invoke())
+            val sigPublic = CliqueConfig.stringToEncodedString("$encryptionOne(public)", encryptSymKey.invoke())
+            val sigPublicKey = CliqueKey(sigPublic, encryptOnePublic, algoDescEncrypted)
+
+            val encryptOnePrivate = CliqueConfig.byteArrayToEncodedString(encryptOnePair.private.encoded, encryptSymKey.invoke())
+            val sigPrivate = CliqueConfig.stringToEncodedString("$encryptionOne(private)", encryptSymKey.invoke())
+            val sigPrivateKey = CliqueKey(sigPrivate, encryptOnePrivate, algoDescEncrypted)
+
+            val sigRoot = CliqueConfig.stringToEncodedString(encryptionOne, encryptSymKey.invoke())
+
+            return SigKeyPair(sigRoot, sigPublicKey, sigPrivateKey)
+        }
     }
 }
 
 data class FeedKeyPair(val feedPublic: String, val feedPublicKey: CliqueKey, val feedPrivate: String, val feedPrivateKey: CliqueKey)
+data class SigKeyPair(val sigRoot: String, val sigPublicKey: CliqueKey, val sigPrivateKey: CliqueKey)
 
 /**
  * This is a representation of a subscription that is used to retrieve feed information for a user.
@@ -241,7 +342,13 @@ data class FeedKeyPair(val feedPublic: String, val feedPublicKey: CliqueKey, val
  * @param readCipher function that generates a decrypting cipher to read the friend's publications.
  * @param rotCipher function that generates a descrypting cipher to read the friend's rotation messages.
  */
-class Friend private constructor(val displayName: String, val url: String, private val readCipher: () -> Cipher?, private val rotCipher: (Int) -> Cipher?){
+class Friend private constructor(
+        val displayName: String,
+        val url: String,
+        private val readCipher: () -> Cipher?,
+        private val verifyMessage: (message: String, signature: String) -> Boolean?,
+        private val rotCipher: (Int) -> Cipher?
+){
 
     /**
      * Take raw encoded feed information and decrypt it.
@@ -274,6 +381,13 @@ class Friend private constructor(val displayName: String, val url: String, priva
     fun encryptRotation(rotation: String) : String {
         return CliqueConfig.stringToEncodedString(rotation, rotCipher.invoke(Cipher.ENCRYPT_MODE)!!)
     }
+
+    /**
+     * Verify that the given message and signature match for this friend.
+     * @param message the message to check.
+     * @param signature the signature provided.
+     */
+    fun verifySignature(message: String, signature: String) : Boolean = verifyMessage(message, signature) == true
 
     /**
      * Create a rotation message that specifies the new values in the give user to the subscriber
@@ -324,7 +438,7 @@ class Friend private constructor(val displayName: String, val url: String, priva
     companion object {
         /**
          * @param subscription user symmetric encrypted subscription information for the friend.
-         * @param symDecrypt function that generates a decryption cipher for the exchange encryption used to encrypt the Subscription.
+         * @param symCipher function that generates a decryption cipher for the exchange encryption used to encrypt the Subscription.
          */
         internal fun fromSubscription(subscription: CliqueSubscription, symCipher: (Int) -> Cipher?): Friend {
             // To create this friend we need to get the display name, url, and read key and turn them
@@ -335,6 +449,9 @@ class Friend private constructor(val displayName: String, val url: String, priva
                     CliqueConfig.encodedStringToString(subscription.subscription, symCipher.invoke(Cipher.DECRYPT_MODE)!!),
                     fun() : Cipher? {
                         return cliqueKeyToAsymPrivateCipher(subscription.feedReadKey, Cipher.DECRYPT_MODE, symCipher)
+                    },
+                    fun(message: String, signature: String) : Boolean? {
+                        return verifyEncodedMessage(subscription.verifyKey, message, signature, symCipher)
                     },
                     fun(mode: Int) : Cipher? {
                         return cliqueKeyToSymCipher(subscription.rotateKey, mode, symCipher)
@@ -392,54 +509,3 @@ class Rotation(newKey: ByteArray? = null, newCipher: String? = null, newUrl: Str
         return this
     }
 }
-//class Rotation private constructor(val name: String, private val rotate: (String, String, Rotation) -> Unit) {
-//
-//    private var _key: String? = null
-//    internal val key: String?
-//        get() = _key
-//
-//    private var _url: String? = null
-//    internal val url: String?
-//        get() = _url
-//
-//    private var _cipher: String? = null
-//    internal val cipher: String?
-//        get() = _cipher
-//
-//    /**
-//     * Sets up this rotation objection for the given user off the provided publish key name and url
-//     * @param newKey the user symmetric encrypted name of the new publish key.
-//     * @param newUrl the user symmetric encrypted url used to publish.
-//     */
-//    internal fun initialize(newKey: String, newUrl: String) {
-//        rotate.invoke(newKey, newUrl, this)
-//    }
-//
-//    companion object {
-//        /**
-//         * This produces a Rotation object that will create a RotationMessage when "rotateMessageForKey" is
-//         * called and a new clique key name is provided (the assumption being that the key has already
-//         * been created).
-//         */
-//        internal fun fromRotationDescription(description: CliqueRotateDescription, symCipher: (Int) -> Cipher?): Rotation {
-//            val name = CliqueConfig.encodedStringToString(description.subscriber, symCipher.invoke(Cipher.DECRYPT_MODE)!!)
-//
-//            val rotate = fun(keyName: String, encodedUrl: String, rotation: Rotation) {
-//                return SecureDatabase.instance?.keyDao()?.findKey(keyName)?.let { newKey ->
-//                    val transcode = fun (value: String): String =
-//                            CliqueConfig.transcodeString(
-//                                    value,
-//                                    symCipher.invoke(Cipher.DECRYPT_MODE)!!,
-//                                    cliqueKeyToSymCipher(description.rotateKey, Cipher.ENCRYPT_MODE, symCipher)!!
-//                            )
-//
-//                    rotation._cipher = transcode(newKey.cipher)
-//                    rotation._key = transcode(newKey.key)
-//                    rotation._url = transcode(encodedUrl)
-//                }!!
-//            }
-//
-//            return Rotation(name, rotate)
-//        }
-//    }
-//}

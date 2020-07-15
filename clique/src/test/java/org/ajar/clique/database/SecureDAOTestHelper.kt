@@ -73,7 +73,9 @@ class CliqueAccountDAOMock : SecureDaoTestMock(), CliqueAccountDAO {
 
     private fun postSubscriptionChange(filter: String) {
         // Previous to the shared key change, "feedReadKey" was "key1" and there was no key2
-        filterSubscriptionMap[filter]?.postValue(filterAccounts(filter)?.map {account -> CliqueSubscription(account.displayName, account.url, account.key2, account.key1) }?.toList())
+        filterSubscriptionMap[filter]?.postValue(filterAccounts(filter)?.map { account ->
+            CliqueSubscription(account.displayName, account.url, account.key2, account.key1, account.key3)
+        }?.toList())
     }
 
     override fun clear() {
@@ -93,8 +95,12 @@ class CliqueAccountDAOMock : SecureDaoTestMock(), CliqueAccountDAO {
         return findAccount(user)?.key2
     }
 
+    override fun findSignatureKey(user: String): String? {
+        return findAccount(user)?.key3
+    }
+
     override fun findFriendRequestInfo(user: String): CliqueSubscription? {
-        return findAccount(user)?.let { CliqueSubscription(it.displayName, it.url, it.key2, it.key1) }
+        return findAccount(user)?.let { CliqueSubscription(it.displayName, it.url, it.key2, it.key1, it.key3) }
     }
 
     override fun findPublishUrlForUser(user: String): String? {
